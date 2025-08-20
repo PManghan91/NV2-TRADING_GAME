@@ -3,6 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { MarketPrice, OHLCData, TradingSymbol, MarketData } from '../types/trading';
 import { WSConnectionStatus } from '../services/WebSocketManager';
 import { DEFAULT_SYMBOLS } from '../utils/constants';
+import { binanceHistoricalService } from '../services/BinanceHistoricalService';
 
 interface MarketStore extends MarketData {
   // Actions
@@ -14,6 +15,10 @@ interface MarketStore extends MarketData {
   removeSubscription: (symbol: string) => void;
   clearAllData: () => void;
   
+  // Historical data actions
+  updateHistoricalData: (symbol: string) => Promise<void>;
+  batchUpdateHistoricalData: (symbols: string[]) => Promise<void>;
+  
   // Computed values
   getPrice: (symbol: string) => MarketPrice | undefined;
   getChartData: (symbol: string) => OHLCData[] | undefined;
@@ -24,6 +29,10 @@ interface MarketStore extends MarketData {
   watchlist: string[];
   addToWatchlist: (symbol: string) => void;
   removeFromWatchlist: (symbol: string) => void;
+  
+  // Historical data state
+  historicalDataLoading: Set<string>;
+  lastHistoricalUpdate: Map<string, number>;
 }
 
 export const useMarketStore = create<MarketStore>()(
@@ -35,6 +44,8 @@ export const useMarketStore = create<MarketStore>()(
     connectionStatus: 'disconnected',
     availableSymbols: DEFAULT_SYMBOLS,
     watchlist: DEFAULT_SYMBOLS.slice(0, 8).map(s => s.symbol), // Default watchlist
+    historicalDataLoading: new Set<string>(),
+    lastHistoricalUpdate: new Map<string, number>(),
     
     // Actions
     updatePrice: (price: MarketPrice) => {
@@ -87,6 +98,10 @@ export const useMarketStore = create<MarketStore>()(
         // Update interval-specific changes from kline sources
         if (price.change15m !== undefined) mergedPrice.change15m = price.change15m;
         if (price.change1h !== undefined) mergedPrice.change1h = price.change1h;
+        if (price.change7d !== undefined) mergedPrice.change7d = price.change7d;
+        if (price.change30d !== undefined) mergedPrice.change30d = price.change30d;
+        if (price.change90d !== undefined) mergedPrice.change90d = price.change90d;
+        if (price.change1y !== undefined) mergedPrice.change1y = price.change1y;
         
         // Debug log to see what values we're getting
         if (price.symbol === 'BTCUSDT') {
@@ -181,7 +196,181 @@ export const useMarketStore = create<MarketStore>()(
         prices: new Map(),
         charts: new Map(),
         subscriptions: new Set(),
+        historicalDataLoading: new Set(),
+        lastHistoricalUpdate: new Map(),
       });
+    },
+
+    // Historical data actions
+    updateHistoricalData: async (symbol: string) => {
+      const state = get();
+      
+      // Check if already loading or recently updated (avoid spam)
+      if (state.historicalDataLoading.has(symbol)) {
+        console.log(`Historical data for ${symbol} already loading`);
+        return;
+      }
+      
+      const lastUpdate = state.lastHistoricalUpdate.get(symbol);
+      const now = Date.now();
+      const MIN_UPDATE_INTERVAL = 10 * 60 * 1000; // 10 minutes
+      
+      if (lastUpdate && (now - lastUpdate) < MIN_UPDATE_INTERVAL) {
+        console.log(`Historical data for ${symbol} updated recently, skipping`);
+        return;
+      }
+      
+      if (!binanceHistoricalService.isSymbolSupported(symbol)) {
+        console.log(`Symbol ${symbol} not supported for historical data`);
+        return;
+      }
+      
+      // Mark as loading
+      set((state) => {
+        const newLoading = new Set(state.historicalDataLoading);
+        newLoading.add(symbol);
+        return { historicalDataLoading: newLoading };
+      });
+      
+      try {
+        console.log(`Fetching historical data for ${symbol}...`);
+        const currentPrice = state.prices.get(symbol);
+        
+        if (!currentPrice) {
+          console.log(`No current price available for ${symbol}, skipping historical update`);
+          return;
+        }
+        
+        const historicalUpdate = await binanceHistoricalService.updateHistoricalChanges(
+          symbol, 
+          currentPrice.price
+        );
+        
+        if (historicalUpdate) {
+          // Update the price with historical data
+          const existingPrice = state.prices.get(symbol);
+          if (existingPrice) {
+            const updatedPrice = {
+              ...existingPrice,
+              change7d: historicalUpdate.change7d,
+              change30d: historicalUpdate.change30d,
+              change90d: historicalUpdate.change90d,
+              change1y: historicalUpdate.change1y,
+              timestamp: now,
+            };
+            
+            set((state) => {
+              const newPrices = new Map(state.prices);
+              newPrices.set(symbol, updatedPrice);
+              const newLastUpdate = new Map(state.lastHistoricalUpdate);
+              newLastUpdate.set(symbol, now);
+              
+              return {
+                prices: newPrices,
+                lastHistoricalUpdate: newLastUpdate,
+              };
+            });
+            
+            console.log(`Updated historical data for ${symbol}:`, {
+              change7d: historicalUpdate.change7d?.toFixed(2),
+              change30d: historicalUpdate.change30d?.toFixed(2),
+              change90d: historicalUpdate.change90d?.toFixed(2),
+              change1y: historicalUpdate.change1y?.toFixed(2),
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Error updating historical data for ${symbol}:`, error);
+      } finally {
+        // Mark as no longer loading
+        set((state) => {
+          const newLoading = new Set(state.historicalDataLoading);
+          newLoading.delete(symbol);
+          return { historicalDataLoading: newLoading };
+        });
+      }
+    },
+
+    batchUpdateHistoricalData: async (symbols: string[]) => {
+      const state = get();
+      const now = Date.now();
+      const MIN_UPDATE_INTERVAL = 10 * 60 * 1000; // 10 minutes
+      
+      // Filter symbols that need updating
+      const symbolsToUpdate = symbols.filter(symbol => {
+        if (state.historicalDataLoading.has(symbol)) {
+          return false;
+        }
+        
+        if (!binanceHistoricalService.isSymbolSupported(symbol)) {
+          return false;
+        }
+        
+        const lastUpdate = state.lastHistoricalUpdate.get(symbol);
+        if (lastUpdate && (now - lastUpdate) < MIN_UPDATE_INTERVAL) {
+          return false;
+        }
+        
+        return state.prices.has(symbol); // Only update if we have current price data
+      });
+      
+      if (symbolsToUpdate.length === 0) {
+        console.log('No symbols need historical data updates');
+        return;
+      }
+      
+      console.log(`Batch updating historical data for ${symbolsToUpdate.length} symbols`);
+      
+      // Mark all as loading
+      set((state) => {
+        const newLoading = new Set(state.historicalDataLoading);
+        symbolsToUpdate.forEach(symbol => newLoading.add(symbol));
+        return { historicalDataLoading: newLoading };
+      });
+      
+      try {
+        const results = await binanceHistoricalService.batchUpdateHistoricalData(symbolsToUpdate);
+        
+        if (Object.keys(results).length > 0) {
+          set((state) => {
+            const newPrices = new Map(state.prices);
+            const newLastUpdate = new Map(state.lastHistoricalUpdate);
+            
+            Object.entries(results).forEach(([symbol, historicalUpdate]) => {
+              const existingPrice = newPrices.get(symbol);
+              if (existingPrice) {
+                const updatedPrice = {
+                  ...existingPrice,
+                  change7d: historicalUpdate.change7d,
+                  change30d: historicalUpdate.change30d,
+                  change90d: historicalUpdate.change90d,
+                  change1y: historicalUpdate.change1y,
+                  timestamp: now,
+                };
+                
+                newPrices.set(symbol, updatedPrice);
+                newLastUpdate.set(symbol, now);
+              }
+            });
+            
+            return {
+              prices: newPrices,
+              lastHistoricalUpdate: newLastUpdate,
+            };
+          });
+          
+          console.log(`Batch updated historical data for ${Object.keys(results).length} symbols`);
+        }
+      } catch (error) {
+        console.error('Error in batch historical data update:', error);
+      } finally {
+        // Mark all as no longer loading
+        set((state) => {
+          const newLoading = new Set(state.historicalDataLoading);
+          symbolsToUpdate.forEach(symbol => newLoading.delete(symbol));
+          return { historicalDataLoading: newLoading };
+        });
+      }
     },
 
     // Computed values

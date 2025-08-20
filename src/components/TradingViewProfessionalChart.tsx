@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CrosshairMode, LineStyle, UTCTimestamp } from 'lightweight-charts';
 import { useMarketStore } from '../stores/marketStore';
 import { API_CONFIG } from '../utils/constants';
-import { fetchBinanceKlines } from './TradingViewChartData';
+import { fetchBinanceKlines, isLoading, clearSymbolCache } from './TradingViewChartData';
 import { useSettings } from './SettingsModal';
 import { useCurrency } from '../contexts/CurrencyContext';
 
@@ -43,13 +43,14 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const settings = useSettings();
   const { currency } = useCurrency();
   
-  const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | 'D' | 'W'>('15');
+  const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | '240' | 'D' | 'W' | 'M'>('15');
   const [chartType, setChartType] = useState<'candles' | 'line' | 'area' | 'bars'>(settings.chartType === 'bars' ? 'bars' : settings.chartType === 'line' ? 'line' : 'candles');
   const [showVolume, setShowVolume] = useState(settings.showVolume !== undefined ? settings.showVolume : true);
   const [showSymbolSelector, setShowSymbolSelector] = useState(false);
   const [prevCurrency, setPrevCurrency] = useState(currency.code);
   const [currentCandle, setCurrentCandle] = useState<{ open: number; high: number; low: number; close: number; volume: number } | null>(null);
   const [intervalPercentChange, setIntervalPercentChange] = useState<number>(0);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(false);
   
   // Rate limiting refs
   const lastChartUpdateRef = useRef<number>(0);
@@ -99,15 +100,55 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const currentPrice = prices.get(symbol);
 
   // Calculate percentage change for the selected interval
-  const calculateIntervalPercentChange = useCallback((candles: any[]) => {
-    if (!candles || candles.length < 2) return 0;
+  const calculateIntervalPercentChange = useCallback((candles: any[], currentInterval: string, currentPriceOverride?: number) => {
+    if (!candles || candles.length < 2) {
+      console.log('Insufficient candle data for percentage calculation');
+      return 0;
+    }
     
-    const firstCandle = candles[0];
-    const lastCandle = candles[candles.length - 1];
+    // Simplified and more reliable percentage calculation
+    // Use the number of candles to go back instead of time-based calculation
+    const candlesToGoBack = {
+      '1': 1,    // 1 candle back for 1-minute interval
+      '5': 1,    // 1 candle back for 5-minute interval
+      '15': 1,   // 1 candle back for 15-minute interval
+      '30': 2,   // 2 candles back for 30-minute interval (1 hour)
+      '60': 4,   // 4 candles back for 1-hour interval (4 hours)
+      '240': 6,  // 6 candles back for 4-hour interval (24 hours)
+      'D': 7,    // 7 candles back for daily interval (1 week)
+      'W': 4,    // 4 candles back for weekly interval (1 month)
+      'M': 3     // 3 candles back for monthly interval (3 months)
+    }[currentInterval] || 1;
     
-    if (firstCandle.open === 0) return 0;
+    // Simple approach: go back the specified number of candles
+    const startIndex = Math.max(0, candles.length - 1 - candlesToGoBack);
+    const startCandle = candles[startIndex];
+    const currentCandle = candles[candles.length - 1];
     
-    const percentChange = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+    if (!startCandle || !currentCandle || startCandle.close === 0) {
+      console.log('Invalid candle data for percentage calculation');
+      return 0;
+    }
+    
+    // Use current price override if provided (for real-time updates), otherwise use candle close
+    const currentPrice = currentPriceOverride !== undefined ? currentPriceOverride : currentCandle.close;
+    
+    // Calculate percentage change
+    const percentChange = ((currentPrice - startCandle.close) / startCandle.close) * 100;
+    
+    // Debug logging for BTCUSDT to track calculation
+    if (candles.length > 0 && Math.random() < 0.1) { // Log 10% of the time to avoid spam
+      console.log(`📊 Percentage calculation:`, {
+        interval: currentInterval,
+        candlesToGoBack,
+        startIndex,
+        startPrice: startCandle.close,
+        currentPrice,
+        percentChange: percentChange.toFixed(2) + '%',
+        totalCandles: candles.length
+      });
+    }
+    
     return percentChange;
   }, []);
 
@@ -128,8 +169,10 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         '15': 900000,
         '30': 1800000,
         '60': 3600000,
+        '240': 14400000,
         'D': 86400000,
-        'W': 604800000
+        'W': 604800000,
+        'M': 2629746000 // Average month (30.44 days)
       }[interval] || 900000;
 
       // Map interval to API resolution
@@ -139,8 +182,10 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         '15': '15',
         '30': '30',
         '60': '60',
+        '240': '240',
         'D': 'D',
-        'W': 'W'
+        'W': 'W',
+        'M': 'M'
       }[interval] || 'D';
 
       const numCandles = 150;
@@ -173,7 +218,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         
         const volumes = data.t.map((time: number, index: number) => ({
           time: time,
-          value: data.v ? data.v[index] : 1000000,
+          value: data.v ? data.v[index] : Math.random() * 50000 + 10000, // More realistic fallback: 10k-60k
           color: data.c[index] >= data.o[index] ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
         }));
         
@@ -208,11 +253,17 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       const key = `${symbol}-${interval}-${currency.code}`;
       const existingData = chartDataRef.current.get(key);
       
-      // Only fetch if we don't have data or it's older than 1 minute
-      if (!existingData || Date.now() - existingData.lastUpdate > 60000) {
+      // Check if data is currently being loaded
+      const isCurrentlyLoading = isLoading(symbol, interval);
+      setIsLoadingData(isCurrentlyLoading);
+      
+      // Only fetch if we don't have data or it's older than 1 minute and not currently loading
+      if ((!existingData || Date.now() - existingData.lastUpdate > 60000) && !isCurrentlyLoading) {
+        setIsLoadingData(true);
         const data = await fetchHistoricalData(symbol, interval);
         if (!isMountedRef.current) return;
         chartDataRef.current.set(key, data);
+        setIsLoadingData(false);
         
         // Update chart if it exists
         if (isMountedRef.current && candlestickSeriesRef.current && data.candles.length > 0) {
@@ -240,8 +291,16 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           }
           
           // Calculate percentage change
-          const percentChange = calculateIntervalPercentChange(data.candles);
+          const percentChange = calculateIntervalPercentChange(data.candles, interval);
           setIntervalPercentChange(percentChange);
+          
+          // Debug: Log percentage calculation source
+          if (symbol === 'BTCUSDT') {
+            console.log(`📊 ${symbol} ${interval} percentage calculated from historical data: ${percentChange.toFixed(2)}%`);
+            if (currentPrice?.change24h !== undefined) {
+              console.log(`📡 ${symbol} WebSocket 24h change available: ${currentPrice.change24h.toFixed(2)}%`);
+            }
+          }
           
           // Set current candle
           if (data.candles.length > 0) {
@@ -262,12 +321,12 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     loadData();
   }, [symbol, interval, currency.code, chartType, showVolume, fetchHistoricalData, calculateIntervalPercentChange]);
 
-  // Initialize charts
+  // Initialize charts - now depends on symbol to ensure proper reinitialization
   useEffect(() => {
     if (!chartContainerRef.current || !volumeChartContainerRef.current) return;
     
     const priceHeight = Math.floor(height * 0.7); // 70% for price chart
-    const volumeHeight = Math.floor(height * 0.3); // 30% for volume chart
+    const volumeHeight = Math.floor(height * 0.35); // 35% for volume chart with time labels
 
     // Create main price chart
     const chart = createChart(chartContainerRef.current, {
@@ -511,13 +570,27 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           timeVisible: true,
           secondsVisible: false,
           rightOffset: 5,
-          barSpacing: 6,
-          minBarSpacing: 4,
+          barSpacing: settings.compactMode ? 4 : 6,
+          minBarSpacing: settings.compactMode ? 2 : 4,
           fixLeftEdge: false,
           fixRightEdge: false,
           lockVisibleTimeRangeOnResize: false,
           rightBarStaysOnScroll: true,
-          visible: true
+          visible: true,
+          tickMarkFormatter: (time: UTCTimestamp) => {
+            const date = new Date(time * 1000);
+            if (settings.timezone === 'local') {
+              return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (settings.timezone === 'utc') {
+              return date.toUTCString().slice(17, 22);
+            } else {
+              return date.toLocaleTimeString('en-US', { 
+                timeZone: 'America/New_York',
+                hour: '2-digit', 
+                minute: '2-digit'
+              });
+            }
+          }
         },
         crosshair: {
           mode: CrosshairMode.Normal,
@@ -631,8 +704,135 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
     };
-  }, []); // Only run once on mount
+  }, [symbol, height, showVolume, chartType, settings.theme, settings.compactMode, settings.showGrid, settings.timezone]); // Reinitialize when these dependencies change
 
+  // Enhanced data loading after chart initialization (addresses refresh issues)
+  useEffect(() => {
+    if (!isMountedRef.current || !candlestickSeriesRef.current || !chartRef.current) return;
+    
+    // Force reload data when chart is freshly initialized to handle refresh scenarios
+    const loadChartDataAfterInit = async () => {
+      console.log('Loading chart data after initialization for', symbol);
+      
+      const cacheKey = `${symbol}-${interval}-${currency.code}`;
+      
+      // Don't clear cache completely - check if we have recent data first
+      const existingData = chartDataRef.current.get(cacheKey);
+      const shouldUseCachedData = existingData && Date.now() - existingData.lastUpdate < 5 * 60 * 1000;
+      
+      if (shouldUseCachedData) {
+        console.log('Using existing cached data for immediate chart rendering');
+        const data = existingData;
+        
+        // Update chart immediately with cached data
+        if (data.candles.length > 0 && candlestickSeriesRef.current && chartRef.current) {
+          if (chartType === 'candles' || chartType === 'bars') {
+            candlestickSeriesRef.current.setData(data.candles);
+          } else {
+            const lineData = data.candles.map((c: any) => ({ time: c.time, value: c.close }));
+            candlestickSeriesRef.current.setData(lineData);
+          }
+          
+          if (volumeSeriesRef.current && showVolume) {
+            volumeSeriesRef.current.setData(data.volumes);
+          }
+          
+          chartRef.current.timeScale().fitContent();
+          if (volumeChartRef.current && showVolume) {
+            volumeChartRef.current.timeScale().fitContent();
+          }
+          
+          const percentChange = calculateIntervalPercentChange(data.candles, interval);
+          setIntervalPercentChange(percentChange);
+          
+          if (data.candles.length > 0) {
+            const lastCandle = data.candles[data.candles.length - 1];
+            const lastVolume = data.volumes[data.volumes.length - 1];
+            setCurrentCandle({
+              open: lastCandle.open,
+              high: lastCandle.high,
+              low: lastCandle.low,
+              close: lastCandle.close,
+              volume: lastVolume?.value || 0
+            });
+          }
+        }
+        
+        // Then refresh data in background
+        setTimeout(async () => {
+          if (!isMountedRef.current) return;
+          console.log('Background refresh of chart data after using cache');
+          const freshData = await fetchHistoricalData(symbol, interval);
+          if (freshData && freshData.candles.length > 0) {
+            chartDataRef.current.set(cacheKey, freshData);
+            // Update chart with fresh data
+            if (candlestickSeriesRef.current && chartRef.current) {
+              if (chartType === 'candles' || chartType === 'bars') {
+                candlestickSeriesRef.current.setData(freshData.candles);
+              } else {
+                const lineData = freshData.candles.map((c: any) => ({ time: c.time, value: c.close }));
+                candlestickSeriesRef.current.setData(lineData);
+              }
+              
+              if (volumeSeriesRef.current && showVolume) {
+                volumeSeriesRef.current.setData(freshData.volumes);
+              }
+            }
+          }
+        }, 1000);
+      } else {
+        // No cached data or data is too old, fetch fresh data
+        setIsLoadingData(true);
+        const data = await fetchHistoricalData(symbol, interval);
+        if (!isMountedRef.current) return;
+        
+        chartDataRef.current.set(cacheKey, data);
+        setIsLoadingData(false);
+        
+        // Update chart if we have valid data
+        if (data.candles.length > 0 && candlestickSeriesRef.current && chartRef.current) {
+          if (chartType === 'candles' || chartType === 'bars') {
+            candlestickSeriesRef.current.setData(data.candles);
+          } else {
+            const lineData = data.candles.map((c: any) => ({ time: c.time, value: c.close }));
+            candlestickSeriesRef.current.setData(lineData);
+          }
+          
+          if (volumeSeriesRef.current && showVolume) {
+            volumeSeriesRef.current.setData(data.volumes);
+          }
+          
+          // Fit content and calculate percentage change
+          chartRef.current.timeScale().fitContent();
+          if (volumeChartRef.current && showVolume) {
+            volumeChartRef.current.timeScale().fitContent();
+          }
+          
+          const percentChange = calculateIntervalPercentChange(data.candles, interval);
+          setIntervalPercentChange(percentChange);
+          
+          if (data.candles.length > 0) {
+            const lastCandle = data.candles[data.candles.length - 1];
+            const lastVolume = data.volumes[data.volumes.length - 1];
+            setCurrentCandle({
+              open: lastCandle.open,
+              high: lastCandle.high,
+              low: lastCandle.low,
+              close: lastCandle.close,
+              volume: lastVolume?.value || 0
+            });
+          }
+          
+          console.log('✅ Chart data loaded successfully after initialization');
+        }
+      }
+    };
+    
+    // Small delay to ensure chart is fully initialized
+    const timer = setTimeout(loadChartDataAfterInit, 50);
+    return () => clearTimeout(timer);
+  }, [candlestickSeriesRef.current, chartRef.current, volumeChartRef.current]); // Run when chart refs are ready
+  
   // Update data when interval or currency changes
   useEffect(() => {
     if (!isMountedRef.current || !candlestickSeriesRef.current || !chartRef.current) return;
@@ -653,8 +853,22 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       });
       
       // Calculate and set interval percentage change
-      const percentChange = calculateIntervalPercentChange(candles);
-      setIntervalPercentChange(percentChange);
+      const percentChange = calculateIntervalPercentChange(candles, interval);
+      
+      // For daily intervals (24h), prefer WebSocket 24h data when available and reasonable
+      if (interval === 'D' && currentPrice?.change24h !== undefined && 
+          Math.abs(currentPrice.change24h) < 50 && // Sanity check: less than 50% change
+          currentPrice.source === 'ws-ticker') { // Ensure it's from ticker WebSocket
+        setIntervalPercentChange(currentPrice.change24h);
+        if (symbol === 'BTCUSDT') {
+          console.log(`🎯 ${symbol} Using WebSocket 24h change: ${currentPrice.change24h.toFixed(2)}% (source: ${currentPrice.source})`);
+        }
+      } else {
+        setIntervalPercentChange(percentChange);
+        if (symbol === 'BTCUSDT') {
+          console.log(`📊 ${symbol} Using calculated ${interval} change: ${percentChange.toFixed(2)}% (source: historical)`);
+        }
+      }
     }
     
     // Set data based on chart type
@@ -697,8 +911,10 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       '15': 900000,
       '30': 1800000,
       '60': 3600000,
+      '240': 14400000,
       'D': 86400000,
-      'W': 604800000
+      'W': 604800000,
+      'M': 2629746000 // Average month (30.44 days)
     }[interval] || 900000;
 
     const updatePrice = () => {
@@ -732,13 +948,24 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         };
         data.candles.push(newCandle);
         
-        // Add new volume bar
-        const baseVolume = 1000000;
-        const volumeVariance = Math.random();
-        const volume = baseVolume * (1 + volumeVariance);
+        // Add new volume bar - calculate realistic volume based on historical average
+        let estimatedVolume = 100000; // Default fallback
+        if (data.volumes.length > 0) {
+          // Calculate average volume from recent historical data (last 20 candles)
+          const recentVolumes = data.volumes.slice(-20).map(v => v.value);
+          const avgVolume = recentVolumes.reduce((sum, vol) => sum + vol, 0) / recentVolumes.length;
+          
+          // Generate realistic volume within ±50% of average historical volume
+          const volumeVariance = (Math.random() - 0.5) * 0.5; // -25% to +25%
+          estimatedVolume = avgVolume * (1 + volumeVariance);
+          
+          // Ensure minimum reasonable volume (1% of average)
+          estimatedVolume = Math.max(estimatedVolume, avgVolume * 0.01);
+        }
+        
         const newVolume = {
           time: newCandle.time,
-          value: volume,
+          value: estimatedVolume,
           color: newCandle.close >= newCandle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
         };
         data.volumes.push(newVolume);
@@ -767,11 +994,12 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             high: newCandle.high,
             low: newCandle.low,
             close: newCandle.close,
-            volume: newVolume.value
+            volume: estimatedVolume
           });
           
-          // Recalculate interval percentage change
-          const percentChange = calculateIntervalPercentChange(data.candles);
+          // Recalculate interval percentage change with current live price
+          const convertedPrice = currentPrice.price * currency.rate;
+          const percentChange = calculateIntervalPercentChange(data.candles, interval, convertedPrice);
           setIntervalPercentChange(percentChange);
           
           lastUIUpdateRef.current = now;
@@ -805,8 +1033,9 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             volume: lastVolume?.value || 0
           });
           
-          // Recalculate interval percentage change
-          const percentChange = calculateIntervalPercentChange(data.candles);
+          // Recalculate interval percentage change with current live price
+          const convertedPrice = currentPrice.price * currency.rate;
+          const percentChange = calculateIntervalPercentChange(data.candles, interval, convertedPrice);
           setIntervalPercentChange(percentChange);
           
           lastUIUpdateRef.current = now;
@@ -828,16 +1057,9 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     return () => window.clearInterval(intervalId);
   }, [currentPrice, symbol, interval, chartType, getChartData, currency, showVolume, calculateIntervalPercentChange, CHART_UPDATE_INTERVAL, UI_UPDATE_INTERVAL]);
 
-  if (!currentPrice) {
-    return (
-      <div className="w-full bg-[#131722] rounded-lg flex items-center justify-center" style={{ height }}>
-        <div className="text-gray-500">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
-          <p>Loading chart...</p>
-        </div>
-      </div>
-    );
-  }
+  // Remove dependency on currentPrice for initial chart rendering
+  // The chart should initialize immediately and show "Waiting for data..." in the toolbar
+  // This fixes the refresh issue where charts wouldn't render at all
 
   return (
     <div className="w-full bg-[#131722] rounded">
@@ -848,8 +1070,22 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           {/* Symbol info */}
           <div className="flex items-center space-x-2">
             <span className="text-white font-semibold text-sm">{symbol}</span>
-            <span className={`text-xs ${intervalPercentChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {intervalPercentChange >= 0 ? '▲' : '▼'} {Math.abs(intervalPercentChange).toFixed(2)}%
+            <span className={`text-xs ${
+              // Use WebSocket 24h change for daily intervals, otherwise use calculated change
+              (interval === 'D' && currentPrice?.change24h !== undefined) ? 
+                (currentPrice.change24h >= 0 ? 'text-green-400' : 'text-red-400') :
+                (intervalPercentChange >= 0 ? 'text-green-400' : 'text-red-400')
+            }`}>
+              {/* Show WebSocket 24h change for daily intervals when available */}
+              {interval === 'D' && currentPrice?.change24h !== undefined ? (
+                <>
+                  {currentPrice.change24h >= 0 ? '▲' : '▼'} {Math.abs(currentPrice.change24h).toFixed(2)}%
+                </>
+              ) : (
+                <>
+                  {intervalPercentChange >= 0 ? '▲' : '▼'} {Math.abs(intervalPercentChange).toFixed(2)}%
+                </>
+              )}
             </span>
             <span className="text-gray-500 text-xs">
               {interval === '1' ? '1M' : 
@@ -857,24 +1093,36 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
                interval === '15' ? '15M' : 
                interval === '30' ? '30M' : 
                interval === '60' ? '1H' : 
+               interval === '240' ? '4H' : 
                interval === 'D' ? '1D' : 
-               interval === 'W' ? '1W' : interval}
+               interval === 'W' ? '1W' : 
+               interval === 'M' ? '1MO' : interval}
             </span>
           </div>
 
           {/* Interval buttons */}
           <div className="flex items-center space-x-1">
-            {['1', '5', '15', '30', '60', 'D', 'W'].map((int) => (
+            {[
+              { value: '1', label: '1m' },
+              { value: '5', label: '5m' },
+              { value: '15', label: '15m' },
+              { value: '30', label: '30m' },
+              { value: '60', label: '1h' },
+              { value: '240', label: '4h' },
+              { value: 'D', label: '1D' },
+              { value: 'W', label: '1W' },
+              { value: 'M', label: '1M' }
+            ].map((int) => (
               <button
-                key={int}
-                onClick={() => setInterval(int as any)}
+                key={int.value}
+                onClick={() => setInterval(int.value as any)}
                 className={`px-2 py-1 text-xs font-medium rounded hover:bg-[#2a2e39] transition-colors ${
-                  interval === int
+                  interval === int.value
                     ? 'bg-[#2962FF] text-white'
                     : 'text-gray-400'
                 }`}
               >
-                {int}
+                {int.label}
               </button>
             ))}
           </div>
@@ -941,6 +1189,14 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           >
             Volume
           </button>
+          
+          {/* Loading indicator */}
+          {isLoadingData && (
+            <div className="flex items-center space-x-2 px-2 py-1 bg-[#2a2e39] rounded">
+              <div className="animate-spin rounded-full h-3 w-3 border border-blue-400 border-t-transparent"></div>
+              <span className="text-xs text-blue-400">Loading...</span>
+            </div>
+          )}
         </div>
 
         {/* Right side - Symbol selector and Price info */}
@@ -1027,51 +1283,59 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           
           {/* Price Info - Show actual 24hr OHLC from WebSocket */}
           <div className="flex items-center space-x-6 text-xs">
-            <div>
-              <span className="text-gray-500">O</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.open24h ? (currentPrice.open24h * currency.rate).toFixed(2) : '0.00'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">H</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.high24h ? (currentPrice.high24h * currency.rate).toFixed(2) : '0.00'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">L</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.low24h ? (currentPrice.low24h * currency.rate).toFixed(2) : '0.00'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">C</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice ? (currentPrice.price * currency.rate).toFixed(2) : '0.00'}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">Vol</span>
-              <span className="text-gray-300 ml-1">{currentCandle ? currentCandle.volume.toFixed(0) : '0'}</span>
-            </div>
+            {!currentPrice ? (
+              <div className="flex items-center space-x-2 text-gray-500">
+                <div className="animate-spin rounded-full h-3 w-3 border border-gray-500 border-t-transparent"></div>
+                <span>Waiting for market data...</span>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <span className="text-gray-500">O</span>
+                  <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.open24h ? (currentPrice.open24h * currency.rate).toFixed(2) : '0.00'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">H</span>
+                  <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.high24h ? (currentPrice.high24h * currency.rate).toFixed(2) : '0.00'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">L</span>
+                  <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.low24h ? (currentPrice.low24h * currency.rate).toFixed(2) : '0.00'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">C</span>
+                  <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice ? (currentPrice.price * currency.rate).toFixed(2) : '0.00'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Vol</span>
+                  <span className="text-gray-300 ml-1">{currentCandle ? currentCandle.volume.toFixed(0) : '0'}</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* Chart Containers */}
-      <div className="w-full">
+      <div className="w-full space-y-1">
         {/* Main Price Chart */}
-        <div 
-          ref={chartContainerRef} 
-          className="w-full"
-          style={{ height: Math.floor((height - 40) * 0.7) }}
-        />
-        
-        {/* Separator between Price and Volume charts */}
-        {showVolume && (
-          <div className="w-full h-[2px] bg-gradient-to-r from-transparent via-[#2a2e39] to-transparent" />
-        )}
+        <div className="border border-[#2a2e39] rounded overflow-hidden">
+          <div 
+            ref={chartContainerRef} 
+            className="w-full"
+            style={{ height: showVolume ? Math.floor((height - 40) * 0.63) : height - 40 }}
+          />
+        </div>
         
         {/* Volume Chart */}
         {showVolume && (
-          <div 
-            ref={volumeChartContainerRef} 
-            className="w-full"
-            style={{ height: Math.floor((height - 40) * 0.3) - 2 }}
-          />
+          <div className="border border-[#2a2e39] rounded overflow-hidden">
+            <div 
+              ref={volumeChartContainerRef} 
+              className="w-full"
+              style={{ height: Math.floor((height - 40) * 0.37) - 4 }}
+            />
+          </div>
         )}
       </div>
 

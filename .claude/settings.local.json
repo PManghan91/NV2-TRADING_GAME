@@ -13,7 +13,8 @@
       "Bash(git add:*)",
       "Bash(taskkill:*)",
       "WebFetch(domain:developers.binance.com)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(npm audit:*)"
     ],
     "deny": [],
     "ask": []

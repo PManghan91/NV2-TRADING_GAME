@@ -9,6 +9,11 @@ export interface MarketPrice {
   change15m?: number;  // 15-minute percentage change
   change1h?: number;   // 1-hour percentage change
   change24h?: number;  // 24-hour percentage change
+  change7d?: number;   // 7-day percentage change
+  change30d?: number;  // 30-day percentage change
+  change90d?: number;  // 90-day percentage change
+  change1y?: number;   // 1-year percentage change
+  source?: string;     // Data source tracking (e.g., 'ws-ticker', 'historical')
   
   // OHLC data
   open24h?: number;    // 24-hour open price

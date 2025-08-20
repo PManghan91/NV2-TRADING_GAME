@@ -36,25 +36,105 @@ export const Trading: React.FC = () => {
   const connectionStatus = useMarketStore(state => state.connectionStatus);
   const { currency, formatPrice } = useCurrency();
   
-  // Ensure we have a subscription for the selected symbol
+  // Ensure WebSocket connection and data initialization on component mount
+  useEffect(() => {
+    console.log('Trading component mounted - initializing WebSocket and data');
+    
+    // Always force WebSocket connection to ensure it's active for the Trading page
+    // This handles cases where user navigates directly to /trading on refresh
+    console.log('Ensuring WebSocket connection for Trading page...');
+    binanceWebSocket.forceReconnect();
+    
+    // Subscribe to all default crypto symbols immediately
+    const defaultCryptoSymbols = AVAILABLE_SYMBOLS
+      .filter(s => s.type === 'crypto')
+      .map(s => s.symbol);
+    
+    defaultCryptoSymbols.forEach(symbol => {
+      console.log(`Ensuring subscription for ${symbol}`);
+      binanceWebSocket.subscribe(symbol, 'ticker');
+      useMarketStore.getState().addSubscription(symbol);
+    });
+    
+    // Don't clear chart cache immediately on refresh - let it use cached data while fetching fresh data
+    // This prevents the chart from appearing empty
+  }, []); // Run only once on mount
+  
+  // Ensure WebSocket subscription and historical data for selected symbol
   useEffect(() => {
     if (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT')) {
-      // Check if we're already subscribed
-      const subscriptions = useMarketStore.getState().subscriptions;
-      if (!subscriptions.has(selectedSymbol.symbol)) {
-        console.log(`📡 Subscribing to newly selected symbol: ${selectedSymbol.symbol}`);
-        binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
-        useMarketStore.getState().addSubscription(selectedSymbol.symbol);
-        
-        // WebSocket-only mode - no REST API fallback
-        console.log('✅ WebSocket-only mode - waiting for real-time data');
-      }
+      // Always try to subscribe (the service handles duplicates)
+      console.log(`📡 Ensuring subscription for symbol: ${selectedSymbol.symbol}`);
+      binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
+      useMarketStore.getState().addSubscription(selectedSymbol.symbol);
+      
+      // Fetch historical data for the selected symbol with multiple retry attempts
+      const updateHistoricalData = useMarketStore.getState().updateHistoricalData;
+      
+      // Immediate attempt
+      updateHistoricalData(selectedSymbol.symbol);
+      
+      // Multiple retry attempts to handle refresh scenarios
+      const retryTimer1 = setTimeout(() => {
+        console.log(`🔄 Retry 1: historical data fetch for ${selectedSymbol.symbol}`);
+        updateHistoricalData(selectedSymbol.symbol);
+      }, 1000);
+      
+      const retryTimer2 = setTimeout(() => {
+        console.log(`🔄 Retry 2: historical data fetch for ${selectedSymbol.symbol}`);
+        updateHistoricalData(selectedSymbol.symbol);
+      }, 3000);
+      
+      const retryTimer3 = setTimeout(() => {
+        console.log(`🔄 Retry 3: historical data fetch for ${selectedSymbol.symbol}`);
+        updateHistoricalData(selectedSymbol.symbol);
+      }, 5000);
+      
+      return () => {
+        clearTimeout(retryTimer1);
+        clearTimeout(retryTimer2);
+        clearTimeout(retryTimer3);
+      };
     }
-  }, [selectedSymbol]);
+  }, [selectedSymbol, connectionStatus]);
+
+  // Batch update historical data for all crypto symbols on component mount
+  useEffect(() => {
+    const cryptoSymbols = AVAILABLE_SYMBOLS
+      .filter(s => s.type === 'crypto')
+      .map(s => s.symbol);
+    
+    if (cryptoSymbols.length > 0) {
+      console.log('Batch updating historical data for all crypto symbols on page load');
+      const batchUpdateHistoricalData = useMarketStore.getState().batchUpdateHistoricalData;
+      
+      // Multiple attempts to ensure historical data loads properly on refresh
+      const timer1 = setTimeout(() => {
+        console.log('Batch update attempt 1');
+        batchUpdateHistoricalData(cryptoSymbols);
+      }, 500);
+      
+      const timer2 = setTimeout(() => {
+        console.log('Batch update attempt 2');
+        batchUpdateHistoricalData(cryptoSymbols);
+      }, 2000);
+      
+      const timer3 = setTimeout(() => {
+        console.log('Batch update attempt 3 (final)');
+        batchUpdateHistoricalData(cryptoSymbols);
+      }, 4000);
+      
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+        clearTimeout(timer3);
+      };
+    }
+  }, []); // Run only once on mount
   
   // Rate limiting for price ticker updates (250ms = 4 updates per second)
-  const lastPriceUpdateRef = React.useRef<number>(0);
-  const PRICE_UPDATE_INTERVAL = 250;
+  // const lastPriceUpdateRef = React.useRef<number>(0);
+  // const PRICE_UPDATE_INTERVAL = 250;
   const [orderType, setOrderType] = useState<'market' | 'limit' | 'stop'>('market');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState<string>('1');
@@ -69,61 +149,14 @@ export const Trading: React.FC = () => {
   const prices = useMarketStore(state => state.prices);
   const currentPrice = prices.get(selectedSymbol.symbol);
   
-  // Debug: Log when symbol changes and ensure data connection
+  // Use real historical data from the market store
+  const enrichedCurrentPrice = currentPrice;
+  
+  // Debug: Log when symbol changes
   React.useEffect(() => {
     console.log('Selected symbol changed to:', selectedSymbol.symbol);
     console.log('Current price for', selectedSymbol.symbol, ':', currentPrice);
     console.log('All available prices:', Array.from(prices.keys()));
-    
-    // If we're trying to view crypto but have no crypto prices, try to reconnect
-    if (selectedSymbol.type === 'crypto' && !currentPrice) {
-      console.log('No crypto prices available, checking Binance connection...');
-      // Import and check Binance connection
-      Promise.all([
-        import('../services/BinanceWebSocketService'),
-        import('../services/PriceHistoryService'),
-        import('../stores/marketStore')
-      ]).then(([{ binanceWebSocket }, { priceHistoryService }, { useMarketStore }]) => {
-        // Ensure handlers are set
-        binanceWebSocket.setHandlers({
-          onPriceUpdate: (price) => {
-            console.log('Received price update for', price.symbol, ':', price.price);
-            // DISABLED PriceHistoryService - it overwrites correct percentages
-            // priceHistoryService.updatePrice(price.symbol, price.price);
-            // const changes = priceHistoryService.getChanges(price.symbol);
-            // const enrichedPrice = {
-            //   ...price,
-            //   ...changes
-            // };
-            // Pass data directly without modifications
-            useMarketStore.getState().updatePrice(price);
-          },
-          onStatusChange: (status) => {
-            console.log('Binance status changed to:', status);
-          },
-          onError: (error) => {
-            console.error('Binance error:', error);
-          }
-        });
-        
-        if (!binanceWebSocket.getConnectionStatus()) {
-          console.log('Binance not connected, attempting to connect...');
-          binanceWebSocket.connect().then(() => {
-            console.log('Binance reconnected, subscribing to', selectedSymbol.symbol);
-            // Only subscribe to ticker - trade stream sends 0% changes
-            // binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
-            binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
-          }).catch(err => {
-            console.error('Failed to connect to Binance:', err);
-          });
-        } else {
-          console.log('Binance is connected, subscribing to', selectedSymbol.symbol);
-          // Only subscribe to ticker - trade stream sends 0% changes
-          // binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
-          binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
-        }
-      });
-    }
   }, [selectedSymbol, currentPrice, prices]);
 
   // Paper trading functions
@@ -281,16 +314,68 @@ export const Trading: React.FC = () => {
                   </div>
                 </div>
                 <div>
-                  <span className="text-gray-400 text-sm">24h Change</span>
+                  <span className="text-gray-400 text-sm">24h</span>
                   <div className={`text-lg font-semibold ${
-                    (currentPrice.change24h !== undefined ? currentPrice.change24h : currentPrice.changePercent) >= 0 
+                    (enrichedCurrentPrice?.change24h !== undefined ? enrichedCurrentPrice.change24h : enrichedCurrentPrice?.changePercent ?? 0) >= 0 
                       ? 'text-trading-green' 
                       : 'text-trading-red'
                   }`}>
                     {(() => {
-                      const change = currentPrice.change24h !== undefined ? currentPrice.change24h : currentPrice.changePercent;
+                      const change = enrichedCurrentPrice?.change24h !== undefined ? enrichedCurrentPrice.change24h : enrichedCurrentPrice?.changePercent ?? 0;
                       return `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
                     })()}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-400 text-sm">7d</span>
+                  <div className={`text-lg font-semibold ${
+                    enrichedCurrentPrice?.change7d !== undefined 
+                      ? (enrichedCurrentPrice.change7d >= 0 ? 'text-trading-green' : 'text-trading-red')
+                      : 'text-gray-500'
+                  }`}>
+                    {enrichedCurrentPrice?.change7d !== undefined 
+                      ? `${enrichedCurrentPrice.change7d >= 0 ? '+' : ''}${enrichedCurrentPrice.change7d.toFixed(2)}%`
+                      : (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT') ? 'Loading...' : 'N/A')
+                    }
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-400 text-sm">30d</span>
+                  <div className={`text-lg font-semibold ${
+                    enrichedCurrentPrice?.change30d !== undefined 
+                      ? (enrichedCurrentPrice.change30d >= 0 ? 'text-trading-green' : 'text-trading-red')
+                      : 'text-gray-500'
+                  }`}>
+                    {enrichedCurrentPrice?.change30d !== undefined 
+                      ? `${enrichedCurrentPrice.change30d >= 0 ? '+' : ''}${enrichedCurrentPrice.change30d.toFixed(2)}%`
+                      : (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT') ? 'Loading...' : 'N/A')
+                    }
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-400 text-sm">90d</span>
+                  <div className={`text-lg font-semibold ${
+                    enrichedCurrentPrice?.change90d !== undefined 
+                      ? (enrichedCurrentPrice.change90d >= 0 ? 'text-trading-green' : 'text-trading-red')
+                      : 'text-gray-500'
+                  }`}>
+                    {enrichedCurrentPrice?.change90d !== undefined 
+                      ? `${enrichedCurrentPrice.change90d >= 0 ? '+' : ''}${enrichedCurrentPrice.change90d.toFixed(2)}%`
+                      : (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT') ? 'Loading...' : 'N/A')
+                    }
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-400 text-sm">1y</span>
+                  <div className={`text-lg font-semibold ${
+                    enrichedCurrentPrice?.change1y !== undefined 
+                      ? (enrichedCurrentPrice.change1y >= 0 ? 'text-trading-green' : 'text-trading-red')
+                      : 'text-gray-500'
+                  }`}>
+                    {enrichedCurrentPrice?.change1y !== undefined 
+                      ? `${enrichedCurrentPrice.change1y >= 0 ? '+' : ''}${enrichedCurrentPrice.change1y.toFixed(2)}%`
+                      : (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT') ? 'Loading...' : 'N/A')
+                    }
                   </div>
                 </div>
               </div>
@@ -320,6 +405,7 @@ export const Trading: React.FC = () => {
           </div>
         </div>
       </div>
+
 
       {/* Main Content */}
       <div className="p-6">

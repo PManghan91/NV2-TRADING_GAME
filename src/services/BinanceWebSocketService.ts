@@ -5,6 +5,7 @@
  */
 
 import { MarketPrice } from '../types/trading';
+import { wsHealthMonitor } from './WebSocketHealthMonitor';
 
 export type BinanceSymbol = string; // e.g., 'btcusdt', 'ethusdt'
 export type BinanceStream = 'trade' | 'ticker' | 'miniTicker' | 'depth' | 'kline' | 'kline_15m' | 'kline_1h';
@@ -80,6 +81,8 @@ export class BinanceWebSocketService {
   private lastSubscriptionTime = 0;
   private subscriptionQueue: string[] = [];
   private subscriptionTimer: number | null = null;
+  private connectionMutex = false; // Prevent race conditions
+  private resubscriptionInProgress = false; // Prevent duplicate resubscription
   
   // Callbacks
   private onPriceUpdate?: (price: MarketPrice) => void;
@@ -108,10 +111,18 @@ export class BinanceWebSocketService {
    */
   public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (this.connectionMutex) {
+        console.log('Connection attempt already in progress');
+        resolve();
+        return;
+      }
+      
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         resolve();
         return;
       }
+      
+      this.connectionMutex = true;
 
       this.onStatusChange?.('connecting');
       
@@ -126,16 +137,27 @@ export class BinanceWebSocketService {
         this.ws.onopen = () => {
           console.log('✅ Binance WebSocket connected successfully!');
           this.isConnected = true;
+          this.connectionMutex = false;
           this.onStatusChange?.('connected');
           this.reconnectAttempts = 0;
           this.startPingInterval();
           
-          // Wait for connection to stabilize, then resubscribe
+          // Record connection in health monitor
+          wsHealthMonitor.onConnect();
+          
+          // Wait for connection to stabilize, then resubscribe (with race condition protection)
           setTimeout(() => {
+            if (this.resubscriptionInProgress) {
+              console.log('Resubscription already in progress, skipping');
+              return;
+            }
+            
             if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
               console.log('WebSocket not ready for subscriptions yet');
               return;
             }
+            
+            this.resubscriptionInProgress = true;
             
             // Resubscribe to all existing subscriptions
             console.log('Resubscribing to:', Array.from(this.subscriptions.entries()));
@@ -150,19 +172,31 @@ export class BinanceWebSocketService {
             });
             
             console.log(`📋 Queued ${this.subscriptionQueue.length} streams for resubscription`);
+            
+            // Reset flag after a delay to allow for processing
+            setTimeout(() => {
+              this.resubscriptionInProgress = false;
+            }, 5000);
           }, 1000); // Wait 1 second for connection to stabilize
           
           resolve();
         };
 
         this.ws.onmessage = (event) => {
+          // Record message in health monitor
+          wsHealthMonitor.onMessage();
           this.handleMessage(event.data);
         };
 
         this.ws.onerror = (error) => {
           console.error('Binance WebSocket error:', error);
+          this.connectionMutex = false;
           this.onStatusChange?.('error');
           this.onError?.(new Error('WebSocket connection error'));
+          
+          // Record error in health monitor
+          wsHealthMonitor.onError(error.toString());
+          
           // Don't reject if already resolved
           if (!this.isConnected) {
             reject(error);
@@ -175,6 +209,9 @@ export class BinanceWebSocketService {
           this.onStatusChange?.('disconnected');
           this.stopPingInterval();
           
+          // Record disconnection in health monitor
+          wsHealthMonitor.onDisconnect();
+          
           // Auto-reconnect if not manual close
           if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.scheduleReconnect();
@@ -183,6 +220,7 @@ export class BinanceWebSocketService {
         
       } catch (error) {
         console.error('Failed to create Binance WebSocket:', error);
+        this.connectionMutex = false;
         this.onStatusChange?.('error');
         reject(error);
       }
@@ -278,14 +316,15 @@ export class BinanceWebSocketService {
     if (this.subscriptionQueue.length === 0) return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     
-    // Rate limit: max 5 subscription messages per second
+    // Enhanced rate limit: max 3 subscription messages per second (more conservative)
     const now = Date.now();
     const timeSinceLastSub = now - this.lastSubscriptionTime;
-    if (timeSinceLastSub < 200) { // 200ms = 5 per second
-      // Reschedule
+    if (timeSinceLastSub < 350) { // 350ms = ~3 per second (safer than 5/sec)
+      // Reschedule with jitter to avoid thundering herd
+      const jitter = Math.random() * 100; // 0-100ms jitter
       this.subscriptionTimer = window.setTimeout(() => {
         this.sendBatchedSubscriptions();
-      }, 200 - timeSinceLastSub);
+      }, (350 - timeSinceLastSub) + jitter);
       return;
     }
     
@@ -362,6 +401,27 @@ export class BinanceWebSocketService {
   private lastReconnectTime?: number;
   
   /**
+   * Get WebSocket health metrics
+   */
+  public getHealthMetrics() {
+    return wsHealthMonitor.getMetrics();
+  }
+
+  /**
+   * Get WebSocket health status
+   */
+  public getHealthStatus() {
+    return wsHealthMonitor.getHealthStatus();
+  }
+
+  /**
+   * Get WebSocket health report
+   */
+  public getHealthReport() {
+    return wsHealthMonitor.getHealthReport();
+  }
+  
+  /**
    * Resubscribe individually as fallback
    */
   private resubscribeIndividually(): void {
@@ -399,10 +459,16 @@ export class BinanceWebSocketService {
   }
 
   /**
-   * Handle incoming messages
+   * Handle incoming messages with comprehensive error handling
    */
   private handleMessage(data: string): void {
     try {
+      // Validate message size to prevent DoS
+      if (data.length > 50000) { // 50KB limit
+        console.warn('Received oversized WebSocket message, ignoring');
+        return;
+      }
+      
       const message = JSON.parse(data);
       
       // Debug: Log message types (but not full trade data to avoid spam)
@@ -449,6 +515,45 @@ export class BinanceWebSocketService {
       
     } catch (error) {
       console.error('Error parsing Binance message:', error);
+      
+      // Enhanced error reporting for debugging
+      if (error instanceof SyntaxError) {
+        console.error('Invalid JSON received from Binance WebSocket:', data.substring(0, 200));
+      } else {
+        console.error('Unexpected error in message handling:', error);
+      }
+      
+      // Implement circuit breaker pattern
+      this.handleMessageError(error);
+      
+      // Record error in health monitor
+      wsHealthMonitor.onError(error instanceof Error ? error.message : String(error));
+    }
+  }
+  
+  private errorCount = 0;
+  private lastErrorTime = 0;
+  private readonly MAX_ERRORS_PER_MINUTE = 10;
+  
+  /**
+   * Handle message processing errors with circuit breaker
+   */
+  private handleMessageError(error: any): void {
+    const now = Date.now();
+    
+    // Reset error count if more than a minute has passed
+    if (now - this.lastErrorTime > 60000) {
+      this.errorCount = 0;
+    }
+    
+    this.errorCount++;
+    this.lastErrorTime = now;
+    
+    // Circuit breaker: if too many errors, force reconnection
+    if (this.errorCount >= this.MAX_ERRORS_PER_MINUTE) {
+      console.error(`Too many WebSocket errors (${this.errorCount}), forcing reconnection`);
+      this.errorCount = 0;
+      this.forceReconnect();
     }
   }
 
@@ -640,18 +745,34 @@ export class BinanceWebSocketService {
   }
 
   /**
-   * Schedule reconnection attempt with exponential backoff
+   * Schedule reconnection attempt with capped exponential backoff and network awareness
    */
   private scheduleReconnect(): void {
     this.reconnectAttempts++;
-    // Exponential backoff: 5s, 10s, 20s, 40s, 60s (max)
-    const delay = Math.min(this.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1), 60000);
+    // Capped exponential backoff: 2s, 4s, 8s, 16s, 30s (max), with jitter
+    const baseDelay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+    const jitter = Math.random() * 1000; // Add 0-1s jitter
+    const delay = baseDelay + jitter;
     
-    console.log(`Scheduling Binance reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+    console.log(`Scheduling Binance reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${Math.round(delay)}ms`);
     console.log('Will resubscribe to:', Array.from(this.subscriptions.keys()));
     
-    setTimeout(() => {
-      this.connect().catch(error => {
+    // Check network connectivity before attempting reconnection
+    const attemptReconnect = async () => {
+      try {
+        // Simple connectivity check
+        const isOnline = navigator.onLine;
+        if (!isOnline) {
+          console.log('Device appears offline, waiting...');
+          // If offline, wait another 5 seconds and try again
+          setTimeout(attemptReconnect, 5000);
+          return;
+        }
+        
+        // Record reconnection attempt in health monitor
+        wsHealthMonitor.onReconnect();
+        await this.connect();
+      } catch (error) {
         console.error('Binance reconnect failed:', error);
         // If reconnect fails, try again
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -660,8 +781,10 @@ export class BinanceWebSocketService {
           console.error('Max reconnection attempts reached. Please refresh the page.');
           this.onStatusChange?.('error');
         }
-      });
-    }, delay);
+      }
+    };
+    
+    setTimeout(attemptReconnect, delay);
   }
 
   /**
