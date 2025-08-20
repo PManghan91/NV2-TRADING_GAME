@@ -6,7 +6,6 @@
 import { API_CONFIG } from '../utils/constants';
 import { MarketPrice } from '../types/trading';
 import { useMarketStore } from '../stores/marketStore';
-import { priceHistoryService } from './PriceHistoryService';
 
 // Popular stocks to track
 export const DEFAULT_STOCK_SYMBOLS = [
@@ -83,13 +82,13 @@ class StockDataService {
           const change = data.c - previousPrice;
           const changePercent = previousPrice !== 0 ? (change / previousPrice) * 100 : 0;
           
-          // Track price history
-          priceHistoryService.updatePrice(symbol, data.c);
+          // DISABLED PriceHistoryService - causes percentage issues
+          // priceHistoryService.updatePrice(symbol, data.c);
           
-          // Get time-based changes
-          const changes = priceHistoryService.getChanges(symbol);
+          // Get time-based changes - DISABLED
+          // const changes = priceHistoryService.getChanges(symbol);
           
-          // Update store with price data including time-based changes
+          // Update store with price data WITHOUT calculated changes
           const marketPrice: MarketPrice = {
             symbol: symbol,
             price: data.c,
@@ -97,8 +96,9 @@ class StockDataService {
             changePercent: changePercent,
             volume: data.v || 0,
             timestamp: Date.now(),
-            ...changes
-          };
+            source: 'stock-finnhub' // Add source tag
+            // ...changes - DISABLED to prevent percentage overwrites
+          } as any;
           
           // Update market store
           useMarketStore.getState().updatePrice(marketPrice);

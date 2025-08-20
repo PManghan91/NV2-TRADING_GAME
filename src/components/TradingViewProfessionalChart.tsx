@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { useMarketStore } from '../stores/marketStore';
+import { API_CONFIG } from '../utils/constants';
+import { fetchBinanceKlines } from './TradingViewChartData';
 
 interface Currency {
   code: 'USD' | 'EUR' | 'GBP';
@@ -37,6 +39,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const candlestickSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const chartDataRef = useRef<Map<string, ChartData>>(new Map());
+  const isMountedRef = useRef(true);
   
   const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | '240' | 'D' | 'W'>('15');
   const [chartType, setChartType] = useState<'candles' | 'line' | 'area' | 'bars'>('candles');
@@ -44,6 +47,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const [showSymbolSelector, setShowSymbolSelector] = useState(false);
   const [prevCurrency, setPrevCurrency] = useState(currency.code);
   const [currentCandle, setCurrentCandle] = useState<{ open: number; high: number; low: number; close: number; volume: number } | null>(null);
+  const [intervalPercentChange, setIntervalPercentChange] = useState<number>(0);
   
   // Rate limiting refs
   const lastChartUpdateRef = useRef<number>(0);
@@ -77,12 +81,30 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const prices = useMarketStore(state => state.prices);
   const currentPrice = prices.get(symbol);
 
-  // Initialize or get chart data
-  const getChartData = useCallback((symbol: string, interval: string) => {
-    const key = `${symbol}-${interval}`;
+  // Calculate percentage change for the selected interval
+  const calculateIntervalPercentChange = useCallback((candles: any[]) => {
+    if (!candles || candles.length < 2) return 0;
     
-    if (!chartDataRef.current.has(key)) {
-      const now = Date.now();
+    const firstCandle = candles[0];
+    const lastCandle = candles[candles.length - 1];
+    
+    if (firstCandle.open === 0) return 0;
+    
+    const percentChange = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+    return percentChange;
+  }, []);
+
+  // Fetch real historical data from API
+  const fetchHistoricalData = useCallback(async (symbol: string, interval: string) => {
+    console.log('Fetching historical data for', symbol, 'with interval', interval);
+    
+    // For crypto, use Binance API
+    if (symbol.includes('USDT')) {
+      return await fetchBinanceKlines(symbol, interval, currency.rate);
+    }
+    
+    // For stocks, use Finnhub
+    try {
       const intervalMs = {
         '1': 60000,
         '5': 300000,
@@ -94,79 +116,124 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         'W': 604800000
       }[interval] || 900000;
 
-      const candles: any[] = [];
-      const volumes: any[] = [];
-      const basePrice = currentPrice?.price || 50000;
-      const numCandles = 150; // Show 150 candles like TradingView
+      // Map interval to API resolution
+      const resolution = {
+        '1': '1',
+        '5': '5',
+        '15': '15',
+        '30': '30',
+        '60': '60',
+        '240': '240',
+        'D': 'D',
+        'W': 'W'
+      }[interval] || 'D';
+
+      const numCandles = 150;
+      const to = Math.floor(Date.now() / 1000);
+      const from = Math.floor((Date.now() - (numCandles * intervalMs)) / 1000);
       
-      // Generate realistic historical data
-      // Start from a price close to current, work backwards
-      let currentOpen = basePrice;
+      // Determine if it's a crypto symbol
+      const isCrypto = symbol.includes('USDT') || symbol.includes('BTC') || symbol.includes('ETH');
+      let apiSymbol = symbol;
       
-      // Generate candles in reverse (from most recent to oldest)
-      const tempCandles: any[] = [];
-      const tempVolumes: any[] = [];
-      
-      for (let i = 0; i < numCandles; i++) {
-        // Generate timestamps aligned to interval boundaries
-        const candleTime = Math.floor((now - (i * intervalMs)) / intervalMs) * intervalMs;
-        const time = Math.floor(candleTime / 1000);
-        
-        // Create realistic OHLC in USD first
-        const volatility = 0.001; // 0.1% volatility (reduced for smoother chart)
-        const trend = Math.random() > 0.5 ? 1 : -1;
-        const change = (Math.random() * volatility * trend);
-        
-        const closeUSD = currentOpen;
-        const openUSD = closeUSD / (1 + change); // Work backwards
-        const highUSD = Math.max(openUSD, closeUSD) * (1 + Math.random() * volatility * 0.3);
-        const lowUSD = Math.min(openUSD, closeUSD) * (1 - Math.random() * volatility * 0.3);
-        
-        // Apply currency conversion
-        const open = openUSD * currency.rate;
-        const close = closeUSD * currency.rate;
-        const high = highUSD * currency.rate;
-        const low = lowUSD * currency.rate;
-        
-        tempCandles.unshift({ time, open, high, low, close }); // Add to beginning
-        
-        // Volume with realistic distribution
-        const baseVolume = 1000000;
-        const volumeVariance = Math.abs(change) * 5; // Reduced volume variance
-        const volume = baseVolume * (1 + volumeVariance + Math.random() * 0.5);
-        
-        tempVolumes.unshift({
-          time,
-          value: volume,
-          color: close >= open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-        });
-        
-        currentOpen = openUSD; // Move backwards in price
+      if (isCrypto) {
+        // For crypto, add BINANCE: prefix if not present
+        apiSymbol = symbol.includes(':') ? symbol : `BINANCE:${symbol}`;
       }
       
-      // Ensure the last candle ends very close to current price
-      if (tempCandles.length > 0 && currentPrice) {
-        const lastCandle = tempCandles[tempCandles.length - 1];
-        const convertedCurrentPrice = currentPrice.price * currency.rate;
+      const url = `${API_CONFIG.FINNHUB.BASE_URL}/${isCrypto ? 'crypto' : 'stock'}/candle?symbol=${apiSymbol}&resolution=${resolution}&from=${from}&to=${to}&token=${API_CONFIG.FINNHUB.API_KEY}`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.s === 'ok' && data.t && data.o && data.h && data.l && data.c) {
+        // Convert API data to chart format with currency conversion
+        const candles = data.t.map((time: number, index: number) => ({
+          time: time,
+          open: data.o[index] * currency.rate,
+          high: data.h[index] * currency.rate,
+          low: data.l[index] * currency.rate,
+          close: data.c[index] * currency.rate
+        }));
         
-        // Adjust the last candle to smoothly connect with current price
-        lastCandle.close = convertedCurrentPrice;
-        lastCandle.high = Math.max(lastCandle.high, convertedCurrentPrice);
-        lastCandle.low = Math.min(lastCandle.low, convertedCurrentPrice);
+        const volumes = data.t.map((time: number, index: number) => ({
+          time: time,
+          value: data.v ? data.v[index] : 1000000,
+          color: data.c[index] >= data.o[index] ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+        }));
+        
+        return { candles, volumes, lastUpdate: Date.now() };
       }
-      
-      candles.push(...tempCandles);
-      volumes.push(...tempVolumes);
-      
-      chartDataRef.current.set(key, {
-        candles,
-        volumes,
-        lastUpdate: now
-      });
+    } catch (error) {
+      console.error('Error fetching historical data:', error);
     }
     
-    return chartDataRef.current.get(key)!;
-  }, [currentPrice, currency]);
+    // Return empty data if fetch fails
+    return { candles: [], volumes: [], lastUpdate: Date.now() };
+  }, [currency]);
+  
+  // Initialize or get chart data
+  const getChartData = useCallback((symbol: string, interval: string) => {
+    const key = `${symbol}-${interval}-${currency.code}`;
+    return chartDataRef.current.get(key) || { candles: [], volumes: [], lastUpdate: 0 };
+  }, [currency.code]);
+  
+  // Track component mount state
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+  
+  // Load historical data when symbol or interval changes
+  useEffect(() => {
+    const loadData = async () => {
+      if (!isMountedRef.current) return;
+      const key = `${symbol}-${interval}-${currency.code}`;
+      const existingData = chartDataRef.current.get(key);
+      
+      // Only fetch if we don't have data or it's older than 1 minute
+      if (!existingData || Date.now() - existingData.lastUpdate > 60000) {
+        const data = await fetchHistoricalData(symbol, interval);
+        if (!isMountedRef.current) return;
+        chartDataRef.current.set(key, data);
+        
+        // Update chart if it exists
+        if (isMountedRef.current && candlestickSeriesRef.current && data.candles.length > 0) {
+          if (chartType === 'candles' || chartType === 'bars') {
+            candlestickSeriesRef.current.setData(data.candles);
+          } else {
+            const lineData = data.candles.map((c: any) => ({ time: c.time, value: c.close }));
+            candlestickSeriesRef.current.setData(lineData);
+          }
+          
+          if (volumeSeriesRef.current && showVolume) {
+            volumeSeriesRef.current.setData(data.volumes);
+          }
+          
+          // Calculate percentage change
+          const percentChange = calculateIntervalPercentChange(data.candles);
+          setIntervalPercentChange(percentChange);
+          
+          // Set current candle
+          if (data.candles.length > 0) {
+            const lastCandle = data.candles[data.candles.length - 1];
+            const lastVolume = data.volumes[data.volumes.length - 1];
+            setCurrentCandle({
+              open: lastCandle.open,
+              high: lastCandle.high,
+              low: lastCandle.low,
+              close: lastCandle.close,
+              volume: lastVolume?.value || 0
+            });
+          }
+        }
+      }
+    };
+    
+    loadData();
+  }, [symbol, interval, currency.code, chartType, showVolume, fetchHistoricalData, calculateIntervalPercentChange]);
 
   // Initialize charts
   useEffect(() => {
@@ -502,16 +569,22 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      if (chart) {
+        chart.remove();
+      }
       if (volumeChart) {
         volumeChart.remove();
       }
+      chartRef.current = null;
+      volumeChartRef.current = null;
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
     };
-  }, [symbol, height, chartType, showVolume, interval, getChartData, currency]);
+  }, []); // Only run once on mount
 
   // Update data when interval or currency changes
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !chartRef.current) return;
+    if (!isMountedRef.current || !candlestickSeriesRef.current || !chartRef.current) return;
 
     const data = getChartData(symbol, interval);
     const { candles, volumes } = data;
@@ -527,6 +600,10 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         close: lastCandle.close,
         volume: lastVolume?.value || 0
       });
+      
+      // Calculate and set interval percentage change
+      const percentChange = calculateIntervalPercentChange(candles);
+      setIntervalPercentChange(percentChange);
     }
     
     // Set data based on chart type
@@ -544,11 +621,11 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     
     // Fit content with some padding
     chartRef.current.timeScale().fitContent();
-  }, [interval, showVolume, chartType, symbol, getChartData, currency]); // Re-run when these change
+  }, [interval, showVolume, chartType, symbol, getChartData, currency, calculateIntervalPercentChange]); // Re-run when these change
 
   // Real-time price updates
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !currentPrice) return;
+    if (!isMountedRef.current || !candlestickSeriesRef.current || !currentPrice) return;
 
     const intervalMs = {
       '1': 60000,
@@ -564,6 +641,9 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     const updatePrice = () => {
       const now = Date.now();
       const nowSeconds = Math.floor(now / 1000);
+      
+      // Check if component is still mounted
+      if (!isMountedRef.current) return;
       
       // Rate limit chart updates
       if (now - lastChartUpdateRef.current < CHART_UPDATE_INTERVAL) {
@@ -605,13 +685,15 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           data.volumes.shift();
         }
 
-        if (chartType === 'candles' || chartType === 'bars') {
-          candlestickSeriesRef.current.update(newCandle);
-        } else {
-          candlestickSeriesRef.current.update({ time: newCandle.time, value: convertedPrice });
+        if (isMountedRef.current && candlestickSeriesRef.current) {
+          if (chartType === 'candles' || chartType === 'bars') {
+            candlestickSeriesRef.current.update(newCandle);
+          } else {
+            candlestickSeriesRef.current.update({ time: newCandle.time, value: convertedPrice });
+          }
         }
         
-        if (volumeSeriesRef.current && showVolume) {
+        if (isMountedRef.current && volumeSeriesRef.current && showVolume) {
           volumeSeriesRef.current.update(newVolume);
         }
         
@@ -624,6 +706,11 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             close: newCandle.close,
             volume: newVolume.value
           });
+          
+          // Recalculate interval percentage change
+          const percentChange = calculateIntervalPercentChange(data.candles);
+          setIntervalPercentChange(percentChange);
+          
           lastUIUpdateRef.current = now;
         }
       } else {
@@ -643,13 +730,20 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             close: lastCandle.close,
             volume: lastVolume?.value || 0
           });
+          
+          // Recalculate interval percentage change
+          const percentChange = calculateIntervalPercentChange(data.candles);
+          setIntervalPercentChange(percentChange);
+          
           lastUIUpdateRef.current = now;
         }
         
-        if (chartType === 'candles' || chartType === 'bars') {
-          candlestickSeriesRef.current.update(lastCandle);
-        } else {
-          candlestickSeriesRef.current.update({ time: lastCandle.time, value: convertedPrice });
+        if (isMountedRef.current && candlestickSeriesRef.current) {
+          if (chartType === 'candles' || chartType === 'bars') {
+            candlestickSeriesRef.current.update(lastCandle);
+          } else {
+            candlestickSeriesRef.current.update({ time: lastCandle.time, value: convertedPrice });
+          }
         }
       }
     };
@@ -658,7 +752,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     updatePrice(); // Initial update
 
     return () => window.clearInterval(intervalId);
-  }, [currentPrice, symbol, interval, chartType, getChartData, currency, showVolume, CHART_UPDATE_INTERVAL, UI_UPDATE_INTERVAL]);
+  }, [currentPrice, symbol, interval, chartType, getChartData, currency, showVolume, calculateIntervalPercentChange, CHART_UPDATE_INTERVAL, UI_UPDATE_INTERVAL]);
 
   if (!currentPrice) {
     return (
@@ -680,8 +774,18 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           {/* Symbol info */}
           <div className="flex items-center space-x-2">
             <span className="text-white font-semibold text-sm">{symbol}</span>
-            <span className={`text-xs ${(currentPrice.change24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {(currentPrice.change24h || 0) >= 0 ? '▲' : '▼'} {Math.abs(currentPrice.change24h || 0).toFixed(2)}%
+            <span className={`text-xs ${intervalPercentChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {intervalPercentChange >= 0 ? '▲' : '▼'} {Math.abs(intervalPercentChange).toFixed(2)}%
+            </span>
+            <span className="text-gray-500 text-xs">
+              {interval === '1' ? '1M' : 
+               interval === '5' ? '5M' : 
+               interval === '15' ? '15M' : 
+               interval === '30' ? '30M' : 
+               interval === '60' ? '1H' : 
+               interval === '240' ? '4H' : 
+               interval === 'D' ? '1D' : 
+               interval === 'W' ? '1W' : interval}
             </span>
           </div>
 

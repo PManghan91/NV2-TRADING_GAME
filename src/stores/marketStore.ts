@@ -38,24 +38,69 @@ export const useMarketStore = create<MarketStore>()(
     
     // Actions
     updatePrice: (price: MarketPrice) => {
+      // AGGRESSIVE LOGGING TO CATCH BAD UPDATES
+      const source = (price as any).source || 'UNKNOWN';
+      if (price.changePercent === 0 || price.change24h === 0 || 
+          (price.changePercent !== undefined && Math.abs(price.changePercent) < 0.1 && Math.abs(price.changePercent) > 0)) {
+        console.warn(`⚠️ SUSPICIOUS UPDATE for ${price.symbol}:`, {
+          source,
+          changePercent: price.changePercent,
+          change24h: price.change24h,
+          price: price.price,
+          timestamp: new Date().toISOString()
+        });
+        console.trace('Stack trace for suspicious update');
+      }
       set((state) => {
         const newPrices = new Map(state.prices);
         
         // Get the previous price data
         const previousPrice = newPrices.get(price.symbol);
         
-        // Merge the new price with existing data, preserving 24h change if not provided
-        const mergedPrice = {
-          ...previousPrice, // Keep existing data
-          ...price, // Override with new data
-        };
+        if (!previousPrice) {
+          // No previous price, use the new price as-is
+          newPrices.set(price.symbol, price);
+          return { prices: newPrices };
+        }
         
-        // Only calculate instant change if previous price exists and no changePercent provided
-        if (previousPrice && price.changePercent === 0) {
-          mergedPrice.change = price.price - previousPrice.price;
-          // Don't override changePercent if we have change24h
-          if (!mergedPrice.change24h) {
-            mergedPrice.changePercent = ((mergedPrice.change / previousPrice.price) * 100);
+        // Smart merge: be selective about what we merge
+        const mergedPrice = { ...previousPrice };
+        
+        // Always update price and volume
+        mergedPrice.symbol = price.symbol;
+        mergedPrice.price = price.price;
+        if (price.volume !== undefined) mergedPrice.volume = price.volume;
+        if (price.timestamp !== undefined) mergedPrice.timestamp = price.timestamp;
+        
+        // Only update percentage changes from authoritative sources (ticker)
+        const source = (price as any).source;
+        if (source === 'ws-ticker' || source === 'rest-initial' || source === 'rest-refresh' || source === 'rest-symbol-change') {
+          // These sources have authoritative 24h data
+          if (price.change !== undefined) mergedPrice.change = price.change;
+          if (price.changePercent !== undefined) mergedPrice.changePercent = price.changePercent;
+          if (price.change24h !== undefined) mergedPrice.change24h = price.change24h;
+        }
+        
+        // Update interval-specific changes from kline sources
+        if (price.change15m !== undefined) mergedPrice.change15m = price.change15m;
+        if (price.change1h !== undefined) mergedPrice.change1h = price.change1h;
+        
+        // Debug log to see what values we're getting
+        if (price.symbol === 'BTCUSDT') {
+          console.log('BTCUSDT update:', {
+            source: (price as any).source || 'unknown',
+            new_change24h: price.change24h,
+            new_changePercent: price.changePercent,
+            prev_change24h: previousPrice.change24h,
+            prev_changePercent: previousPrice.changePercent,
+            final_change24h: mergedPrice.change24h,
+            final_changePercent: mergedPrice.changePercent,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Log stack trace if we're getting 0
+          if (price.change24h === 0 || price.changePercent === 0) {
+            console.trace('Zero percentage detected from:', (price as any).source);
           }
         }
         

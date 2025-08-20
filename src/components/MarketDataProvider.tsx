@@ -13,14 +13,14 @@ export const MarketDataProvider: React.FC<MarketDataProviderProps> = ({ children
   const updatePrice = useMarketStore(state => state.updatePrice);
   const setConnectionStatus = useMarketStore(state => state.setConnectionStatus);
 
-  // Handle incoming price updates
-  const handlePriceUpdate = useCallback((price: MarketPrice) => {
-    console.log('Received price update:', price.symbol, '$' + price.price.toFixed(2));
-    updatePrice(price);
-  }, [updatePrice]);
+  // DISABLED - This was receiving bad data from Finnhub WebSocket
+  // const handlePriceUpdate = useCallback((price: MarketPrice) => {
+  //   console.log('Received price update:', price.symbol, '$' + price.price.toFixed(2));
+  //   updatePrice(price);
+  // }, [updatePrice]);
 
-  // Set up price update listener
-  usePriceUpdates(handlePriceUpdate);
+  // DISABLED - We use Binance WebSocket instead
+  // usePriceUpdates(handlePriceUpdate);
 
   useEffect(() => {
     let isInitialized = false;

@@ -27,49 +27,16 @@ class PriceHistoryService {
     const now = Date.now();
     
     if (!this.priceHistory.has(symbol)) {
-      // Initialize with simulated historical data that trends toward current price
-      const history: PricePoint[] = [];
-      
-      // Generate more realistic historical data that converges to current price
-      let simulatedPrice = price * (0.98 + Math.random() * 0.04); // Start within ±2% of current
-      
-      // Add simulated data points for the last 24 hours
-      for (let i = 24 * 60; i >= 0; i -= 1) { // Every minute for last 24 hours
-        const timeOffset = i * 60 * 1000; // Convert minutes to milliseconds
-        
-        // Gradually converge to current price as we approach present time
-        const convergenceFactor = i / (24 * 60); // 1 at start, 0 at end
-        const targetPrice = price;
-        const maxDeviation = 0.005 * convergenceFactor; // Less deviation as time approaches present
-        
-        // Random walk with mean reversion toward current price
-        const randomChange = (Math.random() - 0.5) * maxDeviation;
-        const meanReversion = (targetPrice - simulatedPrice) * 0.01;
-        simulatedPrice = simulatedPrice * (1 + randomChange + meanReversion);
-        
-        // Ensure we don't deviate too far
-        const maxDiff = price * 0.03; // Max 3% difference
-        if (Math.abs(simulatedPrice - price) > maxDiff) {
-          simulatedPrice = price + (simulatedPrice > price ? maxDiff : -maxDiff);
-        }
-        
-        history.push({
-          price: simulatedPrice,
-          timestamp: now - timeOffset
-        });
-      }
-      
-      // Ensure last historical point matches current price exactly
-      history.push({ price, timestamp: now });
+      // Initialize with just the current price, no fake historical data
+      const history: PricePoint[] = [{ price, timestamp: now }];
       
       this.priceHistory.set(symbol, {
         current: price,
         history
       });
       
-      // Calculate initial changes
-      this.calculateChanges(symbol);
-      console.log(`Started tracking ${symbol} at $${price.toFixed(2)} with simulated history`);
+      // Don't calculate changes yet - we need real historical data
+      console.log(`Started tracking ${symbol} at $${price.toFixed(2)}`);
       return;
     }
     

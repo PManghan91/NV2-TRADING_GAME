@@ -10,7 +10,9 @@
       "Bash(rm:*)",
       "Bash(npm run build:*)",
       "WebSearch",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(taskkill:*)",
+      "WebFetch(domain:developers.binance.com)"
     ],
     "deny": [],
     "ask": []

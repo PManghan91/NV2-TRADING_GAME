@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
 import { binanceWebSocket } from '../services/BinanceWebSocketService';
 import { stockDataService, DEFAULT_STOCK_SYMBOLS } from '../services/StockDataService';
-import { priceHistoryService } from '../services/PriceHistoryService';
 import { MarketPrice } from '../types/trading';
 import { useMarketStore } from '../stores/marketStore';
 
@@ -25,6 +24,7 @@ export const HybridDataProvider: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
+    let refreshInterval: NodeJS.Timeout | null = null;
 
     const initializeDataServices = async () => {
       if (!mounted) return;
@@ -32,16 +32,11 @@ export const HybridDataProvider: React.FC = () => {
       // 1. Initialize Binance WebSocket for crypto
       binanceWebSocket.setHandlers({
         onPriceUpdate: (price: MarketPrice) => {
-          // Track price history
-          priceHistoryService.updatePrice(price.symbol, price.price);
+          // ONLY track price, don't let PriceHistoryService calculate percentages
+          // priceHistoryService.updatePrice(price.symbol, price.price); // DISABLED - causes percentage overwrites
           
-          // Update the store with current price and time-based changes
-          const changes = priceHistoryService.getChanges(price.symbol);
-          const enrichedPrice = {
-            ...price,
-            ...changes
-          };
-          updatePrice(enrichedPrice);
+          // Pass through data directly from Binance
+          updatePrice(price);
         },
         onStatusChange: (status) => {
           // Only update to connected when both services are running
@@ -69,14 +64,18 @@ export const HybridDataProvider: React.FC = () => {
         setTimeout(() => {
           if (!mounted) return;
           
-          // Subscribe to crypto pairs - both trade and ticker for price and 24h stats
+          // Subscribe to all crypto pairs through the service's batching mechanism
           DEFAULT_CRYPTO_PAIRS.forEach(symbol => {
-            binanceWebSocket.subscribe(symbol, 'trade');
-            binanceWebSocket.subscribe(symbol, 'ticker'); // For 24h change data
+            binanceWebSocket.subscribe(symbol, 'ticker');
             useMarketStore.getState().addSubscription(symbol);
           });
           
+          console.log('✅ Queued subscriptions for', DEFAULT_CRYPTO_PAIRS.length, 'crypto pairs');
+          
           console.log('✅ Subscribed to crypto pairs:', DEFAULT_CRYPTO_PAIRS);
+          
+          // No REST API fallback - WebSocket only
+          console.log('✅ WebSocket-only mode - no REST API fallback');
         }, 500);
         
       } catch (error) {
@@ -98,12 +97,28 @@ export const HybridDataProvider: React.FC = () => {
           setConnectionStatus('connected');
         }
       }, 1000);
+      
+      // Set up periodic connection check only
+      refreshInterval = setInterval(() => {
+        if (!mounted) return;
+        
+        // Check if WebSocket is still connected
+        if (!binanceWebSocket.getConnectionStatus()) {
+          console.log('WebSocket disconnected, attempting to reconnect...');
+          setConnectionStatus('disconnected');
+          binanceWebSocket.forceReconnect();
+        }
+      }, 30000); // Check connection every 30 seconds
     };
 
     initializeDataServices();
 
     return () => {
       mounted = false;
+      // Clear refresh interval
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
       // Stop stock polling on unmount
       stockDataService.stopPolling();
       // Keep Binance connected for other components

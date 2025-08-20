@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMarketStore } from '../stores/marketStore';
+import { binanceWebSocket } from '../services/BinanceWebSocketService';
 
 // Import components
 import { TradingViewProfessionalChart } from '../components/TradingViewProfessionalChart';
@@ -44,6 +45,23 @@ export const Trading: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<SymbolInfo>(AVAILABLE_SYMBOLS[0]);
   const [selectedCurrency, setSelectedCurrency] = useState<Currency>(CURRENCIES[0]);
   const [showCurrencySelector, setShowCurrencySelector] = useState(false);
+  const connectionStatus = useMarketStore(state => state.connectionStatus);
+  
+  // Ensure we have a subscription for the selected symbol
+  useEffect(() => {
+    if (selectedSymbol.type === 'crypto' && selectedSymbol.symbol.includes('USDT')) {
+      // Check if we're already subscribed
+      const subscriptions = useMarketStore.getState().subscriptions;
+      if (!subscriptions.has(selectedSymbol.symbol)) {
+        console.log(`📡 Subscribing to newly selected symbol: ${selectedSymbol.symbol}`);
+        binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
+        useMarketStore.getState().addSubscription(selectedSymbol.symbol);
+        
+        // WebSocket-only mode - no REST API fallback
+        console.log('✅ WebSocket-only mode - waiting for real-time data');
+      }
+    }
+  }, [selectedSymbol]);
   
   // Rate limiting for price ticker updates (250ms = 4 updates per second)
   const lastPriceUpdateRef = React.useRef<number>(0);
@@ -108,13 +126,15 @@ export const Trading: React.FC = () => {
         binanceWebSocket.setHandlers({
           onPriceUpdate: (price) => {
             console.log('Received price update for', price.symbol, ':', price.price);
-            priceHistoryService.updatePrice(price.symbol, price.price);
-            const changes = priceHistoryService.getChanges(price.symbol);
-            const enrichedPrice = {
-              ...price,
-              ...changes
-            };
-            useMarketStore.getState().updatePrice(enrichedPrice);
+            // DISABLED PriceHistoryService - it overwrites correct percentages
+            // priceHistoryService.updatePrice(price.symbol, price.price);
+            // const changes = priceHistoryService.getChanges(price.symbol);
+            // const enrichedPrice = {
+            //   ...price,
+            //   ...changes
+            // };
+            // Pass data directly without modifications
+            useMarketStore.getState().updatePrice(price);
           },
           onStatusChange: (status) => {
             console.log('Binance status changed to:', status);
@@ -128,14 +148,16 @@ export const Trading: React.FC = () => {
           console.log('Binance not connected, attempting to connect...');
           binanceWebSocket.connect().then(() => {
             console.log('Binance reconnected, subscribing to', selectedSymbol.symbol);
-            binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
+            // Only subscribe to ticker - trade stream sends 0% changes
+            // binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
             binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
           }).catch(err => {
             console.error('Failed to connect to Binance:', err);
           });
         } else {
           console.log('Binance is connected, subscribing to', selectedSymbol.symbol);
-          binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
+          // Only subscribe to ticker - trade stream sends 0% changes
+          // binanceWebSocket.subscribe(selectedSymbol.symbol, 'trade');
           binanceWebSocket.subscribe(selectedSymbol.symbol, 'ticker');
         }
       });
@@ -262,7 +284,33 @@ export const Trading: React.FC = () => {
             />
 
             {/* Current Price Display */}
-            {currentPrice && (
+            {connectionStatus === 'error' || connectionStatus === 'disconnected' ? (
+              <div className="flex items-center space-x-2 px-4 py-2 bg-red-900/20 border border-red-900/50 rounded-lg">
+                <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-red-400 font-medium">
+                  {connectionStatus === 'error' ? 'Connection Error' : 'Disconnected'}
+                </span>
+                <button
+                  onClick={() => {
+                    console.log('Manual reconnect triggered');
+                    binanceWebSocket.forceReconnect();
+                  }}
+                  className="ml-2 px-3 py-1 bg-red-800 hover:bg-red-700 text-white text-sm rounded transition-colors"
+                >
+                  Reconnect
+                </button>
+              </div>
+            ) : connectionStatus === 'connecting' ? (
+              <div className="flex items-center space-x-2 px-4 py-2 bg-yellow-900/20 border border-yellow-900/50 rounded-lg">
+                <svg className="w-5 h-5 text-yellow-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span className="text-yellow-400 font-medium">Connecting...</span>
+              </div>
+            ) : currentPrice ? (
               <div className="flex items-center space-x-4">
                 <div>
                   <span className="text-gray-400 text-sm">Price</span>
@@ -283,6 +331,10 @@ export const Trading: React.FC = () => {
                     })()}
                   </div>
                 </div>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg">
+                <span className="text-gray-400">Waiting for data...</span>
               </div>
             )}
           </div>
