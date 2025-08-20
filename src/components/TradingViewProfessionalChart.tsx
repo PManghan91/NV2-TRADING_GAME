@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CrosshairMode, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType, CrosshairMode, LineStyle, UTCTimestamp } from 'lightweight-charts';
 import { useMarketStore } from '../stores/marketStore';
 import { API_CONFIG } from '../utils/constants';
 import { fetchBinanceKlines } from './TradingViewChartData';
+import { useSettings } from './SettingsModal';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 interface Currency {
   code: 'USD' | 'EUR' | 'GBP';
@@ -16,7 +18,6 @@ interface TradingViewProfessionalChartProps {
   height?: number;
   availableSymbols?: { symbol: string; name: string; type: 'crypto' | 'stock'; icon: string }[];
   onSymbolChange?: (symbol: string) => void;
-  currency?: Currency;
 }
 
 interface ChartData {
@@ -29,8 +30,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   symbol, 
   height = 600,
   availableSymbols = [],
-  onSymbolChange,
-  currency = { code: 'USD', symbol: '$', name: 'US Dollar', rate: 1.00 }
+  onSymbolChange
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const volumeChartContainerRef = useRef<HTMLDivElement>(null);
@@ -40,10 +40,12 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const volumeSeriesRef = useRef<any>(null);
   const chartDataRef = useRef<Map<string, ChartData>>(new Map());
   const isMountedRef = useRef(true);
+  const settings = useSettings();
+  const { currency } = useCurrency();
   
   const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | 'D' | 'W'>('15');
-  const [chartType, setChartType] = useState<'candles' | 'line' | 'area' | 'bars'>('candles');
-  const [showVolume, setShowVolume] = useState(true);
+  const [chartType, setChartType] = useState<'candles' | 'line' | 'area' | 'bars'>(settings.chartType === 'bars' ? 'bars' : settings.chartType === 'line' ? 'line' : 'candles');
+  const [showVolume, setShowVolume] = useState(settings.showVolume !== undefined ? settings.showVolume : true);
   const [showSymbolSelector, setShowSymbolSelector] = useState(false);
   const [prevCurrency, setPrevCurrency] = useState(currency.code);
   const [currentCandle, setCurrentCandle] = useState<{ open: number; high: number; low: number; close: number; volume: number } | null>(null);
@@ -58,7 +60,22 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   // Clear cached data when currency changes
   useEffect(() => {
     if (prevCurrency !== currency.code) {
+      console.log(`Currency changed from ${prevCurrency} to ${currency.code}, clearing chart data`);
       chartDataRef.current.clear();
+      
+      // Clear the TradingView chart data cache as well
+      import('./TradingViewChartData').then(({ clearChartCache }) => {
+        clearChartCache();
+      });
+      
+      // Force chart to reload with new currency
+      if (candlestickSeriesRef.current) {
+        candlestickSeriesRef.current.setData([]);
+      }
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.setData([]);
+      }
+      
       setPrevCurrency(currency.code);
     }
   }, [currency.code, prevCurrency]);
@@ -257,21 +274,24 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       width: chartContainerRef.current.clientWidth,
       height: priceHeight,
       layout: {
-        background: { type: ColorType.Solid, color: '#131722' },
-        textColor: '#d1d4dc',
-        fontSize: 11,
+        background: { 
+          type: ColorType.Solid, 
+          color: settings.theme === 'light' ? '#ffffff' : '#131722' 
+        },
+        textColor: settings.theme === 'light' ? '#2a2e39' : '#d1d4dc',
+        fontSize: settings.compactMode ? 10 : 11,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif'
       },
       grid: {
         vertLines: {
-          color: '#1e222d',
+          color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
           style: LineStyle.Solid,
-          visible: true
+          visible: settings.showGrid !== undefined ? settings.showGrid : true
         },
         horzLines: {
-          color: '#1e222d',
+          color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
           style: LineStyle.Solid,
-          visible: true
+          visible: settings.showGrid !== undefined ? settings.showGrid : true
         }
       },
       crosshair: {
@@ -306,13 +326,30 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 5,
-        barSpacing: 6,
-        minBarSpacing: 4,
+        barSpacing: settings.compactMode ? 4 : 6,
+        minBarSpacing: settings.compactMode ? 2 : 4,
         fixLeftEdge: false,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: false,
         rightBarStaysOnScroll: true,
-        visible: true
+        visible: true,
+        tickMarkFormatter: (time: UTCTimestamp) => {
+          const date = new Date(time * 1000);
+          if (settings.timezone === 'local') {
+            // Use local timezone
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } else if (settings.timezone === 'utc') {
+            // Use UTC
+            return date.toUTCString().slice(17, 22);
+          } else {
+            // Exchange time (assuming EST/EDT for US exchanges)
+            return date.toLocaleTimeString('en-US', { 
+              timeZone: 'America/New_York',
+              hour: '2-digit', 
+              minute: '2-digit'
+            });
+          }
+        }
       },
       handleScroll: {
         mouseWheel: true,
@@ -438,21 +475,24 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         width: volumeChartContainerRef.current.clientWidth,
         height: volumeHeight,
         layout: {
-          background: { type: ColorType.Solid, color: '#131722' },
-          textColor: '#d1d4dc',
-          fontSize: 11,
+          background: { 
+            type: ColorType.Solid, 
+            color: settings.theme === 'light' ? '#ffffff' : '#131722' 
+          },
+          textColor: settings.theme === 'light' ? '#2a2e39' : '#d1d4dc',
+          fontSize: settings.compactMode ? 10 : 11,
           fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif'
         },
         grid: {
           vertLines: {
-            color: '#1e222d',
+            color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
             style: LineStyle.Solid,
-            visible: true
+            visible: settings.showGrid !== undefined ? settings.showGrid : true
           },
           horzLines: {
-            color: '#1e222d',
+            color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
             style: LineStyle.Solid,
-            visible: true
+            visible: settings.showGrid !== undefined ? settings.showGrid : true
           }
         },
         rightPriceScale: {
@@ -685,9 +725,9 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         const convertedPrice = currentPrice.price * currency.rate;
         const newCandle = {
           time: Math.floor((Math.floor(Date.now() / intervalMs) * intervalMs) / 1000),
-          open: lastCandle.close, // New candle opens at previous close
-          high: Math.max(lastCandle.close, convertedPrice), // High is max of open and current
-          low: Math.min(lastCandle.close, convertedPrice), // Low is min of open and current
+          open: convertedPrice, // Use current converted price for open to avoid currency mismatch
+          high: convertedPrice,
+          low: convertedPrice,
           close: convertedPrice
         };
         data.candles.push(newCandle);
@@ -739,9 +779,20 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       } else {
         // Update last candle with currency conversion
         const convertedPrice = currentPrice.price * currency.rate;
-        lastCandle.close = convertedPrice;
-        lastCandle.high = Math.max(lastCandle.high, convertedPrice);
-        lastCandle.low = Math.min(lastCandle.low, convertedPrice);
+        // Only update if the candle is in the same currency (avoid mixing currencies)
+        // Check if the price difference is reasonable (not a currency conversion spike)
+        const priceChangeRatio = Math.abs(convertedPrice - lastCandle.close) / lastCandle.close;
+        if (priceChangeRatio < 0.5) { // If price hasn't changed by more than 50%, it's likely the same currency
+          lastCandle.close = convertedPrice;
+          lastCandle.high = Math.max(lastCandle.high, convertedPrice);
+          lastCandle.low = Math.min(lastCandle.low, convertedPrice);
+        } else {
+          // Currency has likely changed, create a new candle instead
+          console.log('Large price jump detected, likely currency change. Refreshing chart data.');
+          // Clear the chart data to force a reload with correct currency
+          chartDataRef.current.delete(`${symbol}-${interval}-${currency.code}`);
+          return;
+        }
         
         // Update current candle state for UI display (rate limited)
         if (now - lastUIUpdateRef.current >= UI_UPDATE_INTERVAL) {

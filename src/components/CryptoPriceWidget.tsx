@@ -1,5 +1,6 @@
 import React from 'react';
 import { useMarketStore } from '../stores/marketStore';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 const CRYPTO_DISPLAY_CONFIG = [
   { symbol: 'BTCUSDT', name: 'Bitcoin', icon: '₿' },
@@ -12,11 +13,19 @@ const CRYPTO_DISPLAY_CONFIG = [
 export const CryptoPriceWidget: React.FC = () => {
   const prices = useMarketStore(state => state.prices);
   const connectionStatus = useMarketStore(state => state.connectionStatus);
+  const { currency, formatPrice: formatCurrencyPrice } = useCurrency();
 
   const formatPrice = (price: number): string => {
-    if (price > 1000) return price.toFixed(2);
-    if (price > 1) return price.toFixed(4);
-    return price.toFixed(6);
+    // Use currency context for formatting
+    if (currency.code === 'USD') {
+      // Keep original USD formatting
+      if (price > 1000) return `$${price.toFixed(2)}`;
+      if (price > 1) return `$${price.toFixed(4)}`;
+      return `$${price.toFixed(6)}`;
+    } else {
+      // Use currency conversion
+      return formatCurrencyPrice(price, price > 1000 ? 2 : price > 1 ? 4 : 6);
+    }
   };
 
   const formatChange = (change: number): string => {

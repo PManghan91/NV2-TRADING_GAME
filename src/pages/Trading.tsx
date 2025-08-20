@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMarketStore } from '../stores/marketStore';
 import { binanceWebSocket } from '../services/BinanceWebSocketService';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 // Import components
 import { TradingViewProfessionalChart } from '../components/TradingViewProfessionalChart';
@@ -14,12 +15,6 @@ interface SymbolInfo {
   icon: string;
 }
 
-interface Currency {
-  code: 'USD' | 'EUR' | 'GBP';
-  symbol: string;
-  name: string;
-  rate: number; // Conversion rate from USD
-}
 
 const AVAILABLE_SYMBOLS: SymbolInfo[] = [
   // Crypto
@@ -34,18 +29,12 @@ const AVAILABLE_SYMBOLS: SymbolInfo[] = [
   { symbol: 'TSLA', name: 'Tesla', type: 'stock', icon: '🚗' },
 ];
 
-const CURRENCIES: Currency[] = [
-  { code: 'USD', symbol: '$', name: 'US Dollar', rate: 1.00 },
-  { code: 'EUR', symbol: '€', name: 'Euro', rate: 0.92 },
-  { code: 'GBP', symbol: '£', name: 'British Pound', rate: 0.79 },
-];
 
 export const Trading: React.FC = () => {
   const navigate = useNavigate();
   const [selectedSymbol, setSelectedSymbol] = useState<SymbolInfo>(AVAILABLE_SYMBOLS[0]);
-  const [selectedCurrency, setSelectedCurrency] = useState<Currency>(CURRENCIES[0]);
-  const [showCurrencySelector, setShowCurrencySelector] = useState(false);
   const connectionStatus = useMarketStore(state => state.connectionStatus);
+  const { currency, formatPrice } = useCurrency();
   
   // Ensure we have a subscription for the selected symbol
   useEffect(() => {
@@ -79,33 +68,6 @@ export const Trading: React.FC = () => {
 
   const prices = useMarketStore(state => state.prices);
   const currentPrice = prices.get(selectedSymbol.symbol);
-  
-  // Helper function to convert prices
-  const convertPrice = (priceInUSD: number) => {
-    return priceInUSD * selectedCurrency.rate;
-  };
-  
-  // Helper function to format price with currency symbol
-  const formatPrice = (priceInUSD: number, decimals: number = 2) => {
-    const convertedPrice = convertPrice(priceInUSD);
-    const formatted = convertedPrice.toFixed(decimals);
-    return `${selectedCurrency.symbol}${formatted}`;
-  };
-  
-  // Close dropdown when clicking outside
-  React.useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest('.currency-selector-container')) {
-        setShowCurrencySelector(false);
-      }
-    };
-    
-    if (showCurrencySelector) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showCurrencySelector]);
   
   // Debug: Log when symbol changes and ensure data connection
   React.useEffect(() => {
@@ -369,50 +331,11 @@ export const Trading: React.FC = () => {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-white">Price Chart</h2>
                 
-                {/* Currency Selector */}
-                <div className="relative currency-selector-container">
-                  <button
-                    onClick={() => setShowCurrencySelector(!showCurrencySelector)}
-                    className="flex items-center space-x-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-white transition-colors"
-                  >
-                    <span className="text-lg font-bold">{selectedCurrency.symbol}</span>
-                    <span className="font-medium">{selectedCurrency.code}</span>
-                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  
-                  {/* Dropdown Menu */}
-                  {showCurrencySelector && (
-                  <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50">
-                    <div className="px-3 py-2 text-xs text-gray-400 font-semibold border-b border-gray-700">SELECT CURRENCY</div>
-                    {CURRENCIES.map(currency => (
-                      <button
-                        key={currency.code}
-                        onClick={() => {
-                          setSelectedCurrency(currency);
-                          setShowCurrencySelector(false);
-                        }}
-                        className={`w-full px-3 py-3 flex items-center justify-between hover:bg-gray-700 transition-colors ${
-                          selectedCurrency.code === currency.code ? 'bg-gray-700' : ''
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3">
-                          <span className="text-xl font-bold">{currency.symbol}</span>
-                          <div className="text-left">
-                            <div className="text-white text-sm font-medium">{currency.code}</div>
-                            <div className="text-gray-400 text-xs">{currency.name}</div>
-                          </div>
-                        </div>
-                        {selectedCurrency.code === currency.code && (
-                          <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  )}
+                {/* Currency Display */}
+                <div className="flex items-center space-x-2 px-4 py-2 bg-gray-800 rounded-lg text-white">
+                  <span className="text-sm text-gray-400">Currency:</span>
+                  <span className="text-lg font-bold">{currency.symbol}</span>
+                  <span className="font-medium">{currency.code}</span>
                 </div>
               </div>
               
@@ -426,7 +349,6 @@ export const Trading: React.FC = () => {
                     setSelectedSymbol(newSelection);
                   }
                 }}
-                currency={selectedCurrency}
               />
             </div>
 
@@ -451,7 +373,7 @@ export const Trading: React.FC = () => {
                             <div>
                               <div className="font-semibold text-white">{position.name}</div>
                               <div className="text-sm text-gray-400">
-                                {position.quantity} @ ${position.avgPrice.toFixed(2)}
+                                {position.quantity} @ {formatPrice(position.avgPrice, 2)}
                               </div>
                             </div>
                             <div className="text-right">
@@ -488,7 +410,7 @@ export const Trading: React.FC = () => {
                               <span className="text-white">{trade.name}</span>
                             </div>
                             <div className="text-sm text-gray-400 mt-1">
-                              {trade.quantity} @ ${trade.price.toFixed(2)}
+                              {trade.quantity} @ {formatPrice(trade.price, 2)}
                             </div>
                           </div>
                           <div className="text-right">
@@ -637,9 +559,9 @@ export const Trading: React.FC = () => {
                     const volume = Math.random() * 10;
                     return (
                       <div key={`sell-${i}`} className="grid grid-cols-3 text-xs">
-                        <div className="text-red-400 text-right">{price.toFixed(4)}</div>
+                        <div className="text-red-400 text-right">{formatPrice(price, 4)}</div>
                         <div className="text-gray-500 text-center">{volume.toFixed(3)}</div>
-                        <div className="text-gray-600 text-right">${(price * volume).toFixed(2)}</div>
+                        <div className="text-gray-600 text-right">{formatPrice(price * volume, 2)}</div>
                       </div>
                     );
                   })}
@@ -648,7 +570,7 @@ export const Trading: React.FC = () => {
                 {/* Current Price Divider */}
                 <div className="border-t border-b border-trading-border py-2">
                   <div className="text-center font-semibold text-white">
-                    {currentPrice ? `$${currentPrice.price.toFixed(4)}` : '---'}
+                    {currentPrice ? formatPrice(currentPrice.price, 4) : '---'}
                   </div>
                 </div>
 
@@ -659,9 +581,9 @@ export const Trading: React.FC = () => {
                     const volume = Math.random() * 10;
                     return (
                       <div key={`buy-${i}`} className="grid grid-cols-3 text-xs">
-                        <div className="text-green-400 text-right">{price.toFixed(4)}</div>
+                        <div className="text-green-400 text-right">{formatPrice(price, 4)}</div>
                         <div className="text-gray-500 text-center">{volume.toFixed(3)}</div>
-                        <div className="text-gray-600 text-right">${(price * volume).toFixed(2)}</div>
+                        <div className="text-gray-600 text-right">{formatPrice(price * volume, 2)}</div>
                       </div>
                     );
                   })}

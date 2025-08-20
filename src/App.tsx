@@ -3,17 +3,19 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { DashboardLayout } from './components/DashboardLayout';
 import { MarketDataProvider } from './components/MarketDataProvider';
 import { HybridDataProvider } from './components/HybridDataProvider';
+import { CurrencyProvider } from './contexts/CurrencyContext';
 import { Dashboard } from './pages/Dashboard';
 import { Trading } from './pages/Trading';
 
 function App() {
   return (
     <Router>
-      <MarketDataProvider>
-        {/* Auto-connect to data sources: Binance WebSocket + Stock REST API */}
-        <HybridDataProvider />
-        
-        <Routes>
+      <CurrencyProvider>
+        <MarketDataProvider>
+          {/* Auto-connect to data sources: Binance WebSocket + Stock REST API */}
+          <HybridDataProvider />
+          
+          <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={
             <DashboardLayout>
@@ -54,7 +56,8 @@ function App() {
             </DashboardLayout>
           } />
         </Routes>
-      </MarketDataProvider>
+        </MarketDataProvider>
+      </CurrencyProvider>
     </Router>
   );
 }

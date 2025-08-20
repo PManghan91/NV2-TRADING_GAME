@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useConnectionStatus } from '../stores/marketStore';
 import { WSConnectionStatus } from '../services/WebSocketManager';
+import { Settings } from 'lucide-react';
+import { SettingsModal } from './SettingsModal';
 
 interface HeaderProps {
   onToggleSidebar?: () => void;
@@ -38,8 +40,9 @@ const getStatusText = (status: WSConnectionStatus): string => {
 
 export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
   const connectionStatus = useConnectionStatus();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  return (
+  return (<>
     <header className="bg-trading-surface border-b border-trading-border px-4 py-3 flex items-center justify-between">
       <div className="flex items-center space-x-4">
         {/* Mobile menu button */}
@@ -79,11 +82,23 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           {new Date().toLocaleTimeString()}
         </div>
 
+        {/* Settings button */}
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="p-2 rounded-lg hover:bg-gray-800 transition-colors group"
+          aria-label="Settings"
+        >
+          <Settings className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+        </button>
+
         {/* User menu placeholder */}
         <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center">
           <span className="text-xs font-medium text-white">U</span>
         </div>
       </div>
     </header>
-  );
+    
+    {/* Settings Modal */}
+    <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+  </>);
 };

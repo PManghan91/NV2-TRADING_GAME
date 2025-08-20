@@ -1,5 +1,6 @@
 import React from 'react';
 import { useMarketStore } from '../stores/marketStore';
+import { useCurrency } from '../contexts/CurrencyContext';
 
 const STOCK_DISPLAY_CONFIG = [
   { symbol: 'AAPL', name: 'Apple', icon: '🍎' },
@@ -12,9 +13,10 @@ const STOCK_DISPLAY_CONFIG = [
 export const StockPriceWidget: React.FC = () => {
   const prices = useMarketStore(state => state.prices);
   const connectionStatus = useMarketStore(state => state.connectionStatus);
+  const { formatPrice: formatCurrencyPrice } = useCurrency();
 
   const formatPrice = (price: number): string => {
-    return price.toFixed(2);
+    return formatCurrencyPrice(price, 2);
   };
 
   const formatChange = (change: number): string => {
