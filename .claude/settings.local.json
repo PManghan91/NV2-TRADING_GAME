@@ -12,7 +12,8 @@
       "WebSearch",
       "Bash(git add:*)",
       "Bash(taskkill:*)",
-      "WebFetch(domain:developers.binance.com)"
+      "WebFetch(domain:developers.binance.com)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

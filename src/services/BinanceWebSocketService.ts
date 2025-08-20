@@ -494,6 +494,9 @@ export class BinanceWebSocketService {
     const price = parseFloat(ticker.c);
     const priceChange = parseFloat(ticker.p);
     const priceChangePercent = parseFloat(ticker.P);
+    const open = parseFloat(ticker.o);
+    const high = parseFloat(ticker.h);
+    const low = parseFloat(ticker.l);
     
     // Validate the percentage is reasonable (between -100% and 1000%)
     if (priceChangePercent < -100 || priceChangePercent > 1000) {
@@ -508,7 +511,9 @@ export class BinanceWebSocketService {
         priceChangePercent: ticker.P,
         parsedPercent: priceChangePercent,
         lastPrice: ticker.c,
-        openPrice: ticker.o
+        openPrice: ticker.o,
+        high: ticker.h,
+        low: ticker.l
       });
     }
     
@@ -518,13 +523,16 @@ export class BinanceWebSocketService {
       change: priceChange,
       changePercent: priceChangePercent,
       change24h: priceChangePercent, // This is the actual 24h change from Binance
+      open24h: open,  // 24hr open price
+      high24h: high,  // 24hr high price
+      low24h: low,    // 24hr low price
       volume: parseFloat(ticker.v),
       timestamp: ticker.E || Date.now(),
       source: 'ws-ticker' // Track the source
     } as any;
     
     if (ticker.s === 'BTCUSDT') {
-      console.log(`📊 BTCUSDT 24hr Ticker - Price: $${price.toFixed(2)}, 24h Change: ${priceChangePercent.toFixed(2)}%`);
+      console.log(`📊 BTCUSDT 24hr Ticker - Price: $${price.toFixed(2)}, Open: $${open.toFixed(2)}, High: $${high.toFixed(2)}, Low: $${low.toFixed(2)}, 24h Change: ${priceChangePercent.toFixed(2)}%`);
     }
     
     this.onPriceUpdate?.(marketPrice);

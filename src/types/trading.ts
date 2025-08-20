@@ -9,6 +9,11 @@ export interface MarketPrice {
   change15m?: number;  // 15-minute percentage change
   change1h?: number;   // 1-hour percentage change
   change24h?: number;  // 24-hour percentage change
+  
+  // OHLC data
+  open24h?: number;    // 24-hour open price
+  high24h?: number;    // 24-hour high price
+  low24h?: number;     // 24-hour low price
 }
 
 export interface OHLCData {

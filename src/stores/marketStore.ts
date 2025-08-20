@@ -66,11 +66,14 @@ export const useMarketStore = create<MarketStore>()(
         // Smart merge: be selective about what we merge
         const mergedPrice = { ...previousPrice };
         
-        // Always update price and volume
+        // Always update price, volume and OHLC data
         mergedPrice.symbol = price.symbol;
         mergedPrice.price = price.price;
         if (price.volume !== undefined) mergedPrice.volume = price.volume;
         if (price.timestamp !== undefined) mergedPrice.timestamp = price.timestamp;
+        if (price.open24h !== undefined) mergedPrice.open24h = price.open24h;
+        if (price.high24h !== undefined) mergedPrice.high24h = price.high24h;
+        if (price.low24h !== undefined) mergedPrice.low24h = price.low24h;
         
         // Only update percentage changes from authoritative sources (ticker)
         const source = (price as any).source;

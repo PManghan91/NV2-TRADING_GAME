@@ -79,8 +79,8 @@ class StockDataService {
         
         if (data.c) { // c = current price
           const previousPrice = this.lastPrices.get(symbol) || data.c;
-          const change = data.c - previousPrice;
-          const changePercent = previousPrice !== 0 ? (change / previousPrice) * 100 : 0;
+          const change = data.c - data.pc; // Use previous close for accurate change
+          const changePercent = data.pc !== 0 ? (change / data.pc) * 100 : 0;
           
           // DISABLED PriceHistoryService - causes percentage issues
           // priceHistoryService.updatePrice(symbol, data.c);
@@ -94,6 +94,9 @@ class StockDataService {
             price: data.c,
             change: change,
             changePercent: changePercent,
+            open24h: data.o || data.c,  // o = open price
+            high24h: data.h || data.c,  // h = high price  
+            low24h: data.l || data.c,   // l = low price
             volume: data.v || 0,
             timestamp: Date.now(),
             source: 'stock-finnhub' // Add source tag

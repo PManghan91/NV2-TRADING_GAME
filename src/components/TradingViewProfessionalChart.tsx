@@ -41,7 +41,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   const chartDataRef = useRef<Map<string, ChartData>>(new Map());
   const isMountedRef = useRef(true);
   
-  const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | '240' | 'D' | 'W'>('15');
+  const [interval, setInterval] = useState<'1' | '5' | '15' | '30' | '60' | 'D' | 'W'>('15');
   const [chartType, setChartType] = useState<'candles' | 'line' | 'area' | 'bars'>('candles');
   const [showVolume, setShowVolume] = useState(true);
   const [showSymbolSelector, setShowSymbolSelector] = useState(false);
@@ -111,7 +111,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         '15': 900000,
         '30': 1800000,
         '60': 3600000,
-        '240': 14400000,
         'D': 86400000,
         'W': 604800000
       }[interval] || 900000;
@@ -123,7 +122,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         '15': '15',
         '30': '30',
         '60': '60',
-        '240': '240',
         'D': 'D',
         'W': 'W'
       }[interval] || 'D';
@@ -212,6 +210,18 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             volumeSeriesRef.current.setData(data.volumes);
           }
           
+          // Reset chart view when loading new symbol data
+          if (chartRef.current) {
+            chartRef.current.timeScale().fitContent();
+            chartRef.current.priceScale('right').applyOptions({
+              autoScale: true,
+            });
+          }
+          
+          if (volumeChartRef.current && showVolume) {
+            volumeChartRef.current.timeScale().fitContent();
+          }
+          
           // Calculate percentage change
           const percentChange = calculateIntervalPercentChange(data.candles);
           setIntervalPercentChange(percentChange);
@@ -284,6 +294,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         borderVisible: false,
         entireTextOnly: true,
         visible: true,
+        autoScale: true,
         scaleMargins: {
           top: 0.1,
           bottom: 0.1
@@ -619,8 +630,21 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       volumeChartRef.current.timeScale().fitContent();
     }
     
-    // Fit content with some padding
+    // Reset the chart view to fit the new data properly
     chartRef.current.timeScale().fitContent();
+    
+    // Auto-scale the price to fit the new asset's price range
+    if (candlestickSeriesRef.current) {
+      chartRef.current.priceScale('right').applyOptions({
+        autoScale: true,
+      });
+      // Force the chart to recalculate the visible range
+      setTimeout(() => {
+        if (chartRef.current && candlestickSeriesRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
+      }, 0);
+    }
   }, [interval, showVolume, chartType, symbol, getChartData, currency, calculateIntervalPercentChange]); // Re-run when these change
 
   // Real-time price updates
@@ -633,7 +657,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       '15': 900000,
       '30': 1800000,
       '60': 3600000,
-      '240': 14400000,
       'D': 86400000,
       'W': 604800000
     }[interval] || 900000;
@@ -783,7 +806,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
                interval === '15' ? '15M' : 
                interval === '30' ? '30M' : 
                interval === '60' ? '1H' : 
-               interval === '240' ? '4H' : 
                interval === 'D' ? '1D' : 
                interval === 'W' ? '1W' : interval}
             </span>
@@ -791,7 +813,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
 
           {/* Interval buttons */}
           <div className="flex items-center space-x-1">
-            {['1', '5', '15', '30', '60', '240', 'D', 'W'].map((int) => (
+            {['1', '5', '15', '30', '60', 'D', 'W'].map((int) => (
               <button
                 key={int}
                 onClick={() => setInterval(int as any)}
@@ -952,23 +974,23 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             </div>
           )}
           
-          {/* Price Info */}
+          {/* Price Info - Show actual 24hr OHLC from WebSocket */}
           <div className="flex items-center space-x-6 text-xs">
             <div>
               <span className="text-gray-500">O</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentCandle ? currentCandle.open.toFixed(2) : '0.00'}</span>
+              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.open24h ? (currentPrice.open24h * currency.rate).toFixed(2) : '0.00'}</span>
             </div>
             <div>
               <span className="text-gray-500">H</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentCandle ? currentCandle.high.toFixed(2) : '0.00'}</span>
+              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.high24h ? (currentPrice.high24h * currency.rate).toFixed(2) : '0.00'}</span>
             </div>
             <div>
               <span className="text-gray-500">L</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentCandle ? currentCandle.low.toFixed(2) : '0.00'}</span>
+              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice?.low24h ? (currentPrice.low24h * currency.rate).toFixed(2) : '0.00'}</span>
             </div>
             <div>
               <span className="text-gray-500">C</span>
-              <span className="text-gray-300 ml-1">{currency.symbol}{currentCandle ? currentCandle.close.toFixed(2) : '0.00'}</span>
+              <span className="text-gray-300 ml-1">{currency.symbol}{currentPrice ? (currentPrice.price * currency.rate).toFixed(2) : '0.00'}</span>
             </div>
             <div>
               <span className="text-gray-500">Vol</span>
@@ -987,12 +1009,17 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           style={{ height: Math.floor((height - 40) * 0.7) }}
         />
         
+        {/* Separator between Price and Volume charts */}
+        {showVolume && (
+          <div className="w-full h-[2px] bg-gradient-to-r from-transparent via-[#2a2e39] to-transparent" />
+        )}
+        
         {/* Volume Chart */}
         {showVolume && (
           <div 
             ref={volumeChartContainerRef} 
-            className="w-full border-t border-[#2a2e39]"
-            style={{ height: Math.floor((height - 40) * 0.3) }}
+            className="w-full"
+            style={{ height: Math.floor((height - 40) * 0.3) - 2 }}
           />
         )}
       </div>
