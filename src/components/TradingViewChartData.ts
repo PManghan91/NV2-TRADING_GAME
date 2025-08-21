@@ -31,7 +31,7 @@ export function setLoading(symbol: string, interval: string, loading: boolean): 
 }
 
 // Helper function to fetch chart data from Binance
-export async function fetchBinanceKlines(symbol: string, interval: string, currencyRate: number = 1) {
+export async function fetchBinanceKlines(symbol: string, interval: string, currencyRate: number = 1, currencyCode: string = 'USD') {
   // Map interval to Binance kline interval
   const binanceInterval = {
     '1': '1m',
@@ -63,25 +63,37 @@ export async function fetchBinanceKlines(symbol: string, interval: string, curre
     
     const limit = limits[binanceInterval] || 100;
     
-    // Check cache first
-    const cacheKey = `${symbol}-${binanceInterval}-${limit}`;
+    // Check cache first - include currency code in cache key to prevent currency mixing
+    const cacheKey = `${symbol}-${binanceInterval}-${limit}-${currencyCode}`;
     const cached = dataCache.get(cacheKey);
     const cacheDuration = getCacheDuration(binanceInterval);
     
     if (cached && Date.now() - cached.timestamp < cacheDuration) {
-      console.log(`Using cached data for ${symbol} ${binanceInterval} (${Math.round((cacheDuration - (Date.now() - cached.timestamp)) / 1000)}s remaining)`);
-      return cached.data;
+      console.log(`Using cached data for ${symbol} ${binanceInterval} ${currencyCode} (${Math.round((cacheDuration - (Date.now() - cached.timestamp)) / 1000)}s remaining)`);
+      // Apply currency conversion to cached data if needed
+      const result = {
+        candles: cached.data.candles.map((candle: any) => ({
+          ...candle,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close
+        })),
+        volumes: cached.data.volumes,
+        lastUpdate: cached.data.lastUpdate
+      };
+      return result;
     }
     
     // For page refresh scenarios, if we have cached data less than 10 minutes old but no active loading,
     // return cached data but trigger background refresh - increased time window for better UX
     if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000 && !isLoading(symbol, binanceInterval)) {
-      console.log(`Using recent cached data for ${symbol} ${binanceInterval} while refreshing in background`);
+      console.log(`Using recent cached data for ${symbol} ${binanceInterval} ${currencyCode} while refreshing in background`);
       // Trigger immediate background refresh for page refresh scenarios
       setTimeout(() => {
         if (!isLoading(symbol, binanceInterval)) {
-          console.log(`Background refresh for ${symbol} ${binanceInterval}`);
-          fetchBinanceKlines(symbol, interval, currencyRate);
+          console.log(`Background refresh for ${symbol} ${binanceInterval} ${currencyCode}`);
+          fetchBinanceKlines(symbol, interval, currencyRate, currencyCode);
         }
       }, 100); // Reduced delay for faster refresh
       return cached.data;

@@ -33,9 +33,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
   onSymbolChange
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const volumeChartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
-  const volumeChartRef = useRef<any>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const chartDataRef = useRef<Map<string, ChartData>>(new Map());
@@ -158,7 +156,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     
     // For crypto, use Binance API
     if (symbol.includes('USDT')) {
-      return await fetchBinanceKlines(symbol, interval, currency.rate);
+      return await fetchBinanceKlines(symbol, interval, currency.rate, currency.code);
     }
     
     // For stocks, use Finnhub
@@ -286,10 +284,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             });
           }
           
-          if (volumeChartRef.current && showVolume) {
-            volumeChartRef.current.timeScale().fitContent();
-          }
-          
           // Calculate percentage change
           const percentChange = calculateIntervalPercentChange(data.candles, interval);
           setIntervalPercentChange(percentChange);
@@ -321,17 +315,61 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     loadData();
   }, [symbol, interval, currency.code, chartType, showVolume, fetchHistoricalData, calculateIntervalPercentChange]);
 
-  // Initialize charts - now depends on symbol to ensure proper reinitialization
+  // Initialize single chart with both price and volume series
   useEffect(() => {
-    if (!chartContainerRef.current || !volumeChartContainerRef.current) return;
+    if (!chartContainerRef.current) return;
     
-    const priceHeight = Math.floor(height * 0.7); // 70% for price chart
-    const volumeHeight = Math.floor(height * 0.35); // 35% for volume chart with time labels
+    const totalChartHeight = height - 40; // Subtract toolbar height
 
-    // Create main price chart
+    // Time scale configuration
+    const timeScaleOptions = {
+      borderColor: '#2a2e39',
+      borderVisible: false,
+      secondsVisible: false,
+      rightOffset: 5,
+      barSpacing: settings.compactMode ? 4 : 6,
+      minBarSpacing: settings.compactMode ? 2 : 4,
+      fixLeftEdge: false,
+      fixRightEdge: false,
+      lockVisibleTimeRangeOnResize: false,
+      rightBarStaysOnScroll: true,
+      visible: true,
+      timeVisible: true, // Always show time labels at the bottom
+      tickMarkFormatter: (time: UTCTimestamp) => {
+        const date = new Date(time * 1000);
+        if (settings.timezone === 'local') {
+          return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        } else if (settings.timezone === 'utc') {
+          return date.toUTCString().slice(17, 22);
+        } else {
+          return date.toLocaleTimeString('en-US', { 
+            timeZone: 'America/New_York',
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false
+          });
+        }
+      }
+    };
+
+    // Grid configuration
+    const gridOptions = {
+      vertLines: {
+        color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
+        style: LineStyle.Solid,
+        visible: settings.showGrid !== undefined ? settings.showGrid : true
+      },
+      horzLines: {
+        color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
+        style: LineStyle.Solid,
+        visible: settings.showGrid !== undefined ? settings.showGrid : true
+      }
+    };
+
+    // Create single chart instance
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: priceHeight,
+      height: totalChartHeight,
       layout: {
         background: { 
           type: ColorType.Solid, 
@@ -341,18 +379,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         fontSize: settings.compactMode ? 10 : 11,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif'
       },
-      grid: {
-        vertLines: {
-          color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
-          style: LineStyle.Solid,
-          visible: settings.showGrid !== undefined ? settings.showGrid : true
-        },
-        horzLines: {
-          color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
-          style: LineStyle.Solid,
-          visible: settings.showGrid !== undefined ? settings.showGrid : true
-        }
-      },
+      grid: gridOptions,
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
@@ -376,40 +403,10 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         autoScale: true,
         scaleMargins: {
           top: 0.1,
-          bottom: 0.1
+          bottom: showVolume ? 0.4 : 0.1 // Leave space for volume at bottom
         }
       },
-      timeScale: {
-        borderColor: '#2a2e39',
-        borderVisible: false,
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: settings.compactMode ? 4 : 6,
-        minBarSpacing: settings.compactMode ? 2 : 4,
-        fixLeftEdge: false,
-        fixRightEdge: false,
-        lockVisibleTimeRangeOnResize: false,
-        rightBarStaysOnScroll: true,
-        visible: true,
-        tickMarkFormatter: (time: UTCTimestamp) => {
-          const date = new Date(time * 1000);
-          if (settings.timezone === 'local') {
-            // Use local timezone
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          } else if (settings.timezone === 'utc') {
-            // Use UTC
-            return date.toUTCString().slice(17, 22);
-          } else {
-            // Exchange time (assuming EST/EDT for US exchanges)
-            return date.toLocaleTimeString('en-US', { 
-              timeZone: 'America/New_York',
-              hour: '2-digit', 
-              minute: '2-digit'
-            });
-          }
-        }
-      },
+      timeScale: timeScaleOptions,
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -443,6 +440,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     });
 
     let mainSeries: any;
+    let volumeSeries: any = null;
     
     // Create main price series based on type
     switch (chartType) {
@@ -525,132 +523,26 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         break;
     }
 
-    // Create separate volume chart
-    let volumeChart: any = null;
-    let volumeSeries: any = null;
-    
+    // Add volume histogram series to the same chart (overlay)
     if (showVolume) {
-      volumeChart = createChart(volumeChartContainerRef.current, {
-        width: volumeChartContainerRef.current.clientWidth,
-        height: volumeHeight,
-        layout: {
-          background: { 
-            type: ColorType.Solid, 
-            color: settings.theme === 'light' ? '#ffffff' : '#131722' 
-          },
-          textColor: settings.theme === 'light' ? '#2a2e39' : '#d1d4dc',
-          fontSize: settings.compactMode ? 10 : 11,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif'
-        },
-        grid: {
-          vertLines: {
-            color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
-            style: LineStyle.Solid,
-            visible: settings.showGrid !== undefined ? settings.showGrid : true
-          },
-          horzLines: {
-            color: settings.theme === 'light' ? '#e0e3eb' : '#1e222d',
-            style: LineStyle.Solid,
-            visible: settings.showGrid !== undefined ? settings.showGrid : true
-          }
-        },
-        rightPriceScale: {
-          borderColor: '#2a2e39',
-          borderVisible: false,
-          entireTextOnly: true,
-          visible: true,
-          scaleMargins: {
-            top: 0.1,
-            bottom: 0.1
-          }
-        },
-        timeScale: {
-          borderColor: '#2a2e39',
-          borderVisible: false,
-          timeVisible: true,
-          secondsVisible: false,
-          rightOffset: 5,
-          barSpacing: settings.compactMode ? 4 : 6,
-          minBarSpacing: settings.compactMode ? 2 : 4,
-          fixLeftEdge: false,
-          fixRightEdge: false,
-          lockVisibleTimeRangeOnResize: false,
-          rightBarStaysOnScroll: true,
-          visible: true,
-          tickMarkFormatter: (time: UTCTimestamp) => {
-            const date = new Date(time * 1000);
-            if (settings.timezone === 'local') {
-              return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            } else if (settings.timezone === 'utc') {
-              return date.toUTCString().slice(17, 22);
-            } else {
-              return date.toLocaleTimeString('en-US', { 
-                timeZone: 'America/New_York',
-                hour: '2-digit', 
-                minute: '2-digit'
-              });
-            }
-          }
-        },
-        crosshair: {
-          mode: CrosshairMode.Normal,
-          vertLine: {
-            width: 1,
-            color: '#434651',
-            style: LineStyle.Dashed,
-            labelBackgroundColor: '#131722'
-          },
-          horzLine: {
-            width: 1,
-            color: '#434651',
-            style: LineStyle.Dashed,
-            labelBackgroundColor: '#131722'
-          }
-        },
-        handleScroll: {
-          mouseWheel: true,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
-          vertTouchDrag: false
-        },
-        handleScale: {
-          axisPressedMouseMove: {
-            time: true,
-            price: true
-          },
-          axisDoubleClickReset: {
-            time: true,
-            price: true
-          },
-          mouseWheel: true,
-          pinch: true
-        }
-      });
-      
-      volumeSeries = volumeChart.addHistogramSeries({
+      volumeSeries = chart.addHistogramSeries({
         color: '#26a69a',
         priceFormat: {
           type: 'volume',
         },
-        priceScaleId: 'right'
+        priceScaleId: '' // Empty string for overlay
       });
       
-      // Sync time scales
-      chart.timeScale().subscribeVisibleLogicalRangeChange((timeRange: any) => {
-        if (timeRange) {
-          volumeChart.timeScale().setVisibleLogicalRange(timeRange);
-        }
-      });
-      
-      volumeChart.timeScale().subscribeVisibleLogicalRangeChange((timeRange: any) => {
-        if (timeRange) {
-          chart.timeScale().setVisibleLogicalRange(timeRange);
+      // Apply scaleMargins to the volume series' price scale after creation
+      chart.priceScale('').applyOptions({
+        scaleMargins: {
+          top: 0.7, // Volume takes bottom 30% of chart
+          bottom: 0
         }
       });
     }
 
     chartRef.current = chart;
-    volumeChartRef.current = volumeChart;
     candlestickSeriesRef.current = mainSeries;
     volumeSeriesRef.current = volumeSeries;
 
@@ -666,13 +558,11 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       mainSeries.setData(lineData);
     }
     
-    if (volumeSeries && volumeChart && showVolume) {
+    if (volumeSeries && showVolume) {
       volumeSeries.setData(volumes);
-      // Sync time scale fitting
-      volumeChart.timeScale().fitContent();
     }
     
-    // Fit content with some padding
+    // Fit content
     chart.timeScale().fitContent();
 
     // Handle resize
@@ -680,11 +570,6 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       if (chartContainerRef.current) {
         chart.applyOptions({
           width: chartContainerRef.current.clientWidth
-        });
-      }
-      if (volumeChartContainerRef.current && volumeChart) {
-        volumeChart.applyOptions({
-          width: volumeChartContainerRef.current.clientWidth
         });
       }
     };
@@ -696,11 +581,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       if (chart) {
         chart.remove();
       }
-      if (volumeChart) {
-        volumeChart.remove();
-      }
       chartRef.current = null;
-      volumeChartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
     };
@@ -738,9 +619,16 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           }
           
           chartRef.current.timeScale().fitContent();
-          if (volumeChartRef.current && showVolume) {
-            volumeChartRef.current.timeScale().fitContent();
-          }
+          
+          // Apply timeScale visibility settings after fitContent
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.timeScale().applyOptions({
+                timeVisible: !showVolume
+              });
+              
+            }
+          }, 0);
           
           const percentChange = calculateIntervalPercentChange(data.candles, interval);
           setIntervalPercentChange(percentChange);
@@ -802,11 +690,18 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
             volumeSeriesRef.current.setData(data.volumes);
           }
           
-          // Fit content and calculate percentage change
+          // Fit content and calculate percentage change - sync both charts
           chartRef.current.timeScale().fitContent();
-          if (volumeChartRef.current && showVolume) {
-            volumeChartRef.current.timeScale().fitContent();
-          }
+          
+          // Apply timeScale visibility settings after fitContent
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.timeScale().applyOptions({
+                timeVisible: !showVolume
+              });
+              
+            }
+          }, 0);
           
           const percentChange = calculateIntervalPercentChange(data.candles, interval);
           setIntervalPercentChange(percentChange);
@@ -831,7 +726,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     // Small delay to ensure chart is fully initialized
     const timer = setTimeout(loadChartDataAfterInit, 50);
     return () => clearTimeout(timer);
-  }, [candlestickSeriesRef.current, chartRef.current, volumeChartRef.current]); // Run when chart refs are ready
+  }, [candlestickSeriesRef.current, chartRef.current]); // Run when chart refs are ready
   
   // Update data when interval or currency changes
   useEffect(() => {
@@ -879,23 +774,43 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       candlestickSeriesRef.current.setData(lineData);
     }
     
-    if (volumeSeriesRef.current && volumeChartRef.current && showVolume) {
+    if (volumeSeriesRef.current && showVolume) {
       volumeSeriesRef.current.setData(volumes);
-      volumeChartRef.current.timeScale().fitContent();
     }
     
-    // Reset the chart view to fit the new data properly
+    // Reset the chart view to fit the new data properly - sync both charts
     chartRef.current.timeScale().fitContent();
+    
+    // Apply timeScale visibility settings after fitContent
+    setTimeout(() => {
+      if (chartRef.current) {
+        chartRef.current.timeScale().applyOptions({
+          timeVisible: !showVolume
+        });
+        
+        // Volume is now integrated in the same chart - no separate chart sync needed
+      }
+    }, 0);
     
     // Auto-scale the price to fit the new asset's price range
     if (candlestickSeriesRef.current) {
       chartRef.current.priceScale('right').applyOptions({
         autoScale: true,
       });
-      // Force the chart to recalculate the visible range
+      // Force the chart to recalculate the visible range - sync both charts
       setTimeout(() => {
         if (chartRef.current && candlestickSeriesRef.current) {
           chartRef.current.timeScale().fitContent();
+          
+          // Apply timeScale visibility settings after fitContent
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.timeScale().applyOptions({
+                timeVisible: !showVolume
+              });
+              
+            }
+          }, 0);
         }
       }, 0);
     }
@@ -1316,27 +1231,15 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         </div>
       </div>
 
-      {/* Chart Containers */}
-      <div className="w-full space-y-1">
-        {/* Main Price Chart */}
+      {/* Single Chart Container */}
+      <div className="w-full">
         <div className="border border-[#2a2e39] rounded overflow-hidden">
           <div 
             ref={chartContainerRef} 
             className="w-full"
-            style={{ height: showVolume ? Math.floor((height - 40) * 0.63) : height - 40 }}
+            style={{ height: height - 40 }}
           />
         </div>
-        
-        {/* Volume Chart */}
-        {showVolume && (
-          <div className="border border-[#2a2e39] rounded overflow-hidden">
-            <div 
-              ref={volumeChartContainerRef} 
-              className="w-full"
-              style={{ height: Math.floor((height - 40) * 0.37) - 4 }}
-            />
-          </div>
-        )}
       </div>
 
       {/* Instructions overlay */}

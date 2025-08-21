@@ -14,7 +14,9 @@
       "Bash(taskkill:*)",
       "WebFetch(domain:developers.binance.com)",
       "Bash(git push:*)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "WebFetch(domain:tradingview.github.io)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": []
