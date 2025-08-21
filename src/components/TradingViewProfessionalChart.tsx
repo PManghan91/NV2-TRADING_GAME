@@ -15,8 +15,9 @@ interface Currency {
 
 interface TradingViewProfessionalChartProps {
   symbol: string;
+  displaySymbol?: string; // The symbol to display in the UI (currency-aware)
   height?: number;
-  availableSymbols?: { symbol: string; name: string; type: 'crypto' | 'stock'; icon: string }[];
+  availableSymbols?: { symbol: string; name: string; type: 'crypto' | 'stock'; icon: string; displaySymbol?: string }[];
   onSymbolChange?: (symbol: string) => void;
 }
 
@@ -28,6 +29,7 @@ interface ChartData {
 
 export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChartProps> = ({ 
   symbol, 
+  displaySymbol,
   height = 600,
   availableSymbols = [],
   onSymbolChange
@@ -321,7 +323,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
     
     const totalChartHeight = height - 40; // Subtract toolbar height
 
-    // Time scale configuration
+    // Time scale configuration with enhanced time display
     const timeScaleOptions = {
       borderColor: '#2a2e39',
       borderVisible: false,
@@ -337,17 +339,35 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
       timeVisible: true, // Always show time labels at the bottom
       tickMarkFormatter: (time: UTCTimestamp) => {
         const date = new Date(time * 1000);
-        if (settings.timezone === 'local') {
-          return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        } else if (settings.timezone === 'utc') {
-          return date.toUTCString().slice(17, 22);
+        
+        // Format time labels based on interval for better readability
+        if (interval === '1' || interval === '5' || interval === '15' || interval === '30' || interval === '60') {
+          // For intraday intervals, show time in HH:MM format
+          if (settings.timezone === 'local') {
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+          } else if (settings.timezone === 'utc') {
+            return date.toUTCString().slice(17, 22); // HH:MM format from UTC string
+          } else {
+            return date.toLocaleTimeString('en-US', { 
+              timeZone: 'America/New_York',
+              hour: '2-digit', 
+              minute: '2-digit',
+              hour12: false
+            });
+          }
         } else {
-          return date.toLocaleTimeString('en-US', { 
-            timeZone: 'America/New_York',
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: false
-          });
+          // For daily/weekly/monthly intervals, show date
+          if (settings.timezone === 'local') {
+            return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          } else if (settings.timezone === 'utc') {
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+          } else {
+            return date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric',
+              timeZone: 'America/New_York'
+            });
+          }
         }
       }
     };
@@ -376,7 +396,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
           color: settings.theme === 'light' ? '#ffffff' : '#131722' 
         },
         textColor: settings.theme === 'light' ? '#2a2e39' : '#d1d4dc',
-        fontSize: settings.compactMode ? 10 : 11,
+        fontSize: settings.compactMode ? 11 : 12, // Slightly larger font for better readability
         fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif'
       },
       grid: gridOptions,
@@ -384,15 +404,40 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         mode: CrosshairMode.Normal,
         vertLine: {
           width: 1,
-          color: '#434651',
+          color: '#6c7285', // Brighter crosshair color for better visibility
           style: LineStyle.Dashed,
-          labelBackgroundColor: '#131722'
+          labelBackgroundColor: '#1e222d',
+          labelVisible: true
         },
         horzLine: {
           width: 1,
-          color: '#434651',
+          color: '#6c7285', // Brighter crosshair color for better visibility
           style: LineStyle.Dashed,
-          labelBackgroundColor: '#131722'
+          labelBackgroundColor: '#1e222d',
+          labelVisible: true
+        }
+      },
+      localization: {
+        timeFormatter: (time: UTCTimestamp) => {
+          const date = new Date(time * 1000);
+          
+          // Always show time in HH:MM format when hovering in crosshair
+          if (settings.timezone === 'local') {
+            return date.toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit', 
+              hour12: false 
+            });
+          } else if (settings.timezone === 'utc') {
+            return date.toUTCString().slice(17, 22); // Extract HH:MM from UTC string
+          } else {
+            return date.toLocaleTimeString('en-US', { 
+              timeZone: 'America/New_York',
+              hour: '2-digit', 
+              minute: '2-digit',
+              hour12: false
+            });
+          }
         }
       },
       rightPriceScale: {
@@ -435,7 +480,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         horzAlign: 'center',
         vertAlign: 'center',
         color: 'rgba(256, 256, 256, 0.03)',
-        text: symbol,
+        text: displaySymbol || symbol,
       },
     });
 
@@ -984,7 +1029,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
         <div className="flex items-center space-x-4">
           {/* Symbol info */}
           <div className="flex items-center space-x-2">
-            <span className="text-white font-semibold text-sm">{symbol}</span>
+            <span className="text-white font-semibold text-sm">{displaySymbol || symbol}</span>
             <span className={`text-xs ${
               // Use WebSocket 24h change for daily intervals, otherwise use calculated change
               (interval === 'D' && currentPrice?.change24h !== undefined) ? 
@@ -1123,7 +1168,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
                 onClick={() => setShowSymbolSelector(!showSymbolSelector)}
                 className="flex items-center space-x-2 px-3 py-1.5 bg-[#2a2e39] hover:bg-[#363a45] rounded text-white text-sm font-medium transition-colors"
               >
-                <span>{symbol}</span>
+                <span>{displaySymbol || symbol}</span>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={showSymbolSelector ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
                 </svg>
@@ -1149,7 +1194,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
                         <span className="text-lg">{sym.icon}</span>
                         <div className="text-left">
                           <div className="text-white text-sm font-medium">{sym.name}</div>
-                          <div className="text-gray-500 text-xs">{sym.symbol}</div>
+                          <div className="text-gray-500 text-xs">{sym.displaySymbol || sym.symbol}</div>
                         </div>
                       </div>
                       {symbol === sym.symbol && (
@@ -1179,7 +1224,7 @@ export const TradingViewProfessionalChart: React.FC<TradingViewProfessionalChart
                             <span className="text-lg">{sym.icon}</span>
                             <div className="text-left">
                               <div className="text-white text-sm font-medium">{sym.name}</div>
-                              <div className="text-gray-500 text-xs">{sym.symbol}</div>
+                              <div className="text-gray-500 text-xs">{sym.displaySymbol || sym.symbol}</div>
                             </div>
                           </div>
                           {symbol === sym.symbol && (

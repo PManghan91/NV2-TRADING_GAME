@@ -5,13 +5,9 @@ import { binanceWebSocket } from '../services/BinanceWebSocketService';
 import { useCurrency } from '../contexts/CurrencyContext';
 import { TradingViewProfessionalChart } from './TradingViewProfessionalChart';
 import { SymbolSelector } from './SymbolSelector';
+import { SymbolInfo, createSymbolInfo, getSymbolDisplay } from '../utils/symbolUtils';
 
-interface SymbolInfo {
-  symbol: string;
-  name: string;
-  type: 'crypto' | 'stock';
-  icon: string;
-}
+// Use SymbolInfo from symbolUtils
 
 // Memoized Header Component
 const TradingHeader = memo(({ 
@@ -25,7 +21,8 @@ const TradingHeader = memo(({
   totalPL,
   totalPLPercent,
   onNavigate,
-  onReconnect
+  onReconnect,
+  currency
 }: any) => {
   return (
     <div className="bg-trading-surface border-b border-trading-border px-6 py-4">
@@ -43,9 +40,16 @@ const TradingHeader = memo(({
           <h1 className="text-2xl font-bold text-white">Trading Terminal</h1>
           
           <SymbolSelector
-            symbols={AVAILABLE_SYMBOLS}
-            selectedSymbol={selectedSymbol}
+            symbols={AVAILABLE_SYMBOLS.map(symbol => ({
+              ...symbol,
+              displaySymbol: getSymbolDisplay(symbol, currency.code)
+            }))}
+            selectedSymbol={{
+              ...selectedSymbol,
+              displaySymbol: getSymbolDisplay(selectedSymbol, currency.code)
+            }}
             onSymbolChange={onSymbolChange}
+            currency={currency}
           />
 
           <PriceDisplay 
@@ -298,15 +302,15 @@ const OrderEntry = memo(({
 
 const AVAILABLE_SYMBOLS: SymbolInfo[] = [
   // Crypto
-  { symbol: 'BTCUSDT', name: 'Bitcoin', type: 'crypto', icon: '₿' },
-  { symbol: 'ETHUSDT', name: 'Ethereum', type: 'crypto', icon: 'Ξ' },
-  { symbol: 'BNBUSDT', name: 'BNB', type: 'crypto', icon: 'B' },
-  { symbol: 'SOLUSDT', name: 'Solana', type: 'crypto', icon: 'S' },
+  createSymbolInfo('BTCUSDT', 'Bitcoin', 'crypto', '₿'),
+  createSymbolInfo('ETHUSDT', 'Ethereum', 'crypto', 'Ξ'),
+  createSymbolInfo('BNBUSDT', 'BNB', 'crypto', 'B'),
+  createSymbolInfo('SOLUSDT', 'Solana', 'crypto', 'S'),
   // Stocks
-  { symbol: 'AAPL', name: 'Apple', type: 'stock', icon: '🍎' },
-  { symbol: 'MSFT', name: 'Microsoft', type: 'stock', icon: '💻' },
-  { symbol: 'GOOGL', name: 'Google', type: 'stock', icon: '🔍' },
-  { symbol: 'TSLA', name: 'Tesla', type: 'stock', icon: '🚗' },
+  createSymbolInfo('AAPL', 'Apple', 'stock', '🍎'),
+  createSymbolInfo('MSFT', 'Microsoft', 'stock', '💻'),
+  createSymbolInfo('GOOGL', 'Google', 'stock', '🔍'),
+  createSymbolInfo('TSLA', 'Tesla', 'stock', '🚗'),
 ];
 
 export const OptimizedTrading: React.FC = () => {
@@ -445,6 +449,7 @@ export const OptimizedTrading: React.FC = () => {
         totalPLPercent={totalPLPercent}
         onNavigate={handleNavigate}
         onReconnect={handleReconnect}
+        currency={currency}
       />
 
       <div className="p-6">
@@ -453,8 +458,12 @@ export const OptimizedTrading: React.FC = () => {
             <div className="trading-card">
               <TradingViewProfessionalChart 
                 symbol={selectedSymbol.symbol} 
+                displaySymbol={getSymbolDisplay(selectedSymbol, currency.code)}
                 height={500}
-                availableSymbols={AVAILABLE_SYMBOLS}
+                availableSymbols={AVAILABLE_SYMBOLS.map(symbol => ({
+                  ...symbol,
+                  displaySymbol: getSymbolDisplay(symbol, currency.code)
+                }))}
                 onSymbolChange={(newSymbol) => {
                   const newSelection = AVAILABLE_SYMBOLS.find(s => s.symbol === newSymbol);
                   if (newSelection) {

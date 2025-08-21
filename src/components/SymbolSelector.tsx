@@ -1,22 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Currency } from '../utils/currencies';
+import { SymbolInfo } from '../utils/symbolUtils';
 
-interface SymbolInfo {
-  symbol: string;
-  name: string;
-  type: 'crypto' | 'stock';
-  icon: string;
-}
+// Use the SymbolInfo interface from symbolUtils
+// interface SymbolInfo extends from symbolUtils
 
 interface SymbolSelectorProps {
-  symbols: SymbolInfo[];
-  selectedSymbol: SymbolInfo;
+  symbols: (SymbolInfo & { displaySymbol?: string })[];
+  selectedSymbol: SymbolInfo & { displaySymbol?: string };
   onSymbolChange: (symbol: SymbolInfo) => void;
+  currency?: Currency; // Optional currency for display purposes
 }
 
 export const SymbolSelector: React.FC<SymbolSelectorProps> = ({
   symbols,
   selectedSymbol,
-  onSymbolChange
+  onSymbolChange,
+  currency
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -68,7 +68,7 @@ export const SymbolSelector: React.FC<SymbolSelectorProps> = ({
               </div>
               {cryptoSymbols.map(symbol => (
                 <button
-                  key={symbol.symbol}
+                  key={symbol.displaySymbol || symbol.symbol}
                   onClick={() => handleSelect(symbol)}
                   className={`w-full px-3 py-2 text-left hover:bg-trading-border transition-colors flex items-center space-x-2 ${
                     selectedSymbol.symbol === symbol.symbol
@@ -79,7 +79,7 @@ export const SymbolSelector: React.FC<SymbolSelectorProps> = ({
                   <span className="text-lg">{symbol.icon}</span>
                   <div className="flex-1">
                     <div className="font-medium">{symbol.name}</div>
-                    <div className="text-xs text-gray-500">{symbol.symbol}</div>
+                    <div className="text-xs text-gray-500">{symbol.displaySymbol || symbol.symbol}</div>
                   </div>
                   {selectedSymbol.symbol === symbol.symbol && (
                     <svg className="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
@@ -99,7 +99,7 @@ export const SymbolSelector: React.FC<SymbolSelectorProps> = ({
               </div>
               {stockSymbols.map(symbol => (
                 <button
-                  key={symbol.symbol}
+                  key={symbol.displaySymbol || symbol.symbol}
                   onClick={() => handleSelect(symbol)}
                   className={`w-full px-3 py-2 text-left hover:bg-trading-border transition-colors flex items-center space-x-2 ${
                     selectedSymbol.symbol === symbol.symbol
@@ -110,7 +110,7 @@ export const SymbolSelector: React.FC<SymbolSelectorProps> = ({
                   <span className="text-lg">{symbol.icon}</span>
                   <div className="flex-1">
                     <div className="font-medium">{symbol.name}</div>
-                    <div className="text-xs text-gray-500">{symbol.symbol}</div>
+                    <div className="text-xs text-gray-500">{symbol.displaySymbol || symbol.symbol}</div>
                   </div>
                   {selectedSymbol.symbol === symbol.symbol && (
                     <svg className="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 20 20">

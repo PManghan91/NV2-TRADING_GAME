@@ -7,26 +7,23 @@ import { useCurrency } from '../contexts/CurrencyContext';
 // Import components
 import { TradingViewProfessionalChart } from '../components/TradingViewProfessionalChart';
 import { SymbolSelector } from '../components/SymbolSelector';
+import { createSymbolInfo, getSymbolDisplay, SymbolInfo as EnhancedSymbolInfo } from '../utils/symbolUtils';
 
-interface SymbolInfo {
-  symbol: string;
-  name: string;
-  type: 'crypto' | 'stock';
-  icon: string;
-}
+// Use the enhanced SymbolInfo from symbolUtils
+type SymbolInfo = EnhancedSymbolInfo;
 
 
 const AVAILABLE_SYMBOLS: SymbolInfo[] = [
   // Crypto
-  { symbol: 'BTCUSDT', name: 'Bitcoin', type: 'crypto', icon: '₿' },
-  { symbol: 'ETHUSDT', name: 'Ethereum', type: 'crypto', icon: 'Ξ' },
-  { symbol: 'BNBUSDT', name: 'BNB', type: 'crypto', icon: 'B' },
-  { symbol: 'SOLUSDT', name: 'Solana', type: 'crypto', icon: 'S' },
+  createSymbolInfo('BTCUSDT', 'Bitcoin', 'crypto', '₿'),
+  createSymbolInfo('ETHUSDT', 'Ethereum', 'crypto', 'Ξ'),
+  createSymbolInfo('BNBUSDT', 'BNB', 'crypto', 'B'),
+  createSymbolInfo('SOLUSDT', 'Solana', 'crypto', 'S'),
   // Stocks
-  { symbol: 'AAPL', name: 'Apple', type: 'stock', icon: '🍎' },
-  { symbol: 'MSFT', name: 'Microsoft', type: 'stock', icon: '💻' },
-  { symbol: 'GOOGL', name: 'Google', type: 'stock', icon: '🔍' },
-  { symbol: 'TSLA', name: 'Tesla', type: 'stock', icon: '🚗' },
+  createSymbolInfo('AAPL', 'Apple', 'stock', '🍎'),
+  createSymbolInfo('MSFT', 'Microsoft', 'stock', '💻'),
+  createSymbolInfo('GOOGL', 'Google', 'stock', '🔍'),
+  createSymbolInfo('TSLA', 'Tesla', 'stock', '🚗'),
 ];
 
 
@@ -35,6 +32,14 @@ export const Trading: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<SymbolInfo>(AVAILABLE_SYMBOLS[0]);
   const connectionStatus = useMarketStore(state => state.connectionStatus);
   const { currency, formatPrice } = useCurrency();
+  
+  // Create currency-aware symbol list for display
+  const getDisplaySymbols = (): (SymbolInfo & { displaySymbol: string })[] => {
+    return AVAILABLE_SYMBOLS.map(symbol => ({
+      ...symbol,
+      displaySymbol: getSymbolDisplay(symbol, currency.code)
+    }));
+  };
   
   // Ensure WebSocket connection and data initialization on component mount
   useEffect(() => {
@@ -273,9 +278,19 @@ export const Trading: React.FC = () => {
             
             {/* Symbol Selector */}
             <SymbolSelector
-              symbols={AVAILABLE_SYMBOLS}
-              selectedSymbol={selectedSymbol}
-              onSymbolChange={setSelectedSymbol}
+              symbols={getDisplaySymbols()}
+              selectedSymbol={{
+                ...selectedSymbol,
+                displaySymbol: getSymbolDisplay(selectedSymbol, currency.code)
+              }}
+              onSymbolChange={(symbol) => {
+                // Find the original symbol without displaySymbol for state
+                const originalSymbol = AVAILABLE_SYMBOLS.find(s => s.symbol === symbol.symbol);
+                if (originalSymbol) {
+                  setSelectedSymbol(originalSymbol);
+                }
+              }}
+              currency={currency}
             />
 
             {/* Current Price Display */}
@@ -427,8 +442,9 @@ export const Trading: React.FC = () => {
               
               <TradingViewProfessionalChart 
                 symbol={selectedSymbol.symbol} 
+                displaySymbol={getSymbolDisplay(selectedSymbol, currency.code)}
                 height={500}
-                availableSymbols={AVAILABLE_SYMBOLS}
+                availableSymbols={getDisplaySymbols()}
                 onSymbolChange={(newSymbol) => {
                   const newSelection = AVAILABLE_SYMBOLS.find(s => s.symbol === newSymbol);
                   if (newSelection) {
